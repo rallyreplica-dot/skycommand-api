@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SKYCOMMAND</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <img src="assets/skycommand-logo.png" alt="SkyCommand Logo" class="logo">
+            <h1>SKYCOMMAND</h1>
+        </header>
+        <section class="login-section">
+            <h2>Login</h2>
+            <form class="login-form">
+                <label for="role">Login as:</label>
+                <select id="role" name="role">
+                    <option value="atc">ATC</option>
+                    <option value="ground">Ground Crew</option>
+                    <option value="admin">Admin</option>
+                    <option value="management">Management</option>
+                </select>
+                <label for="username">Username:</label>
+                <input type="text" id="username" name="username" required>
+                <label for="password">Password:</label>
+                <input type="password" id="password" name="password" required>
+                <button type="submit">Login</button>
+            </form>
+        </section>
+</div>
+<div id="atc-dashboard" style="display:none; text-align:center; margin-top:40px;">
+    <h2>ATC Dashboard</h2>
+    <button onclick="window.open('live-map.html', '_blank')">Live Map</button>
+    <button onclick="window.open('flight-board.html', '_blank')">Flight Board</button>
+    <button onclick="window.open('movements-log.html', '_blank')">Movements Log</button>
+</div>
+<script>
+document.querySelector('.login-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    var role = document.getElementById('role').value;
+    if (role === 'atc') {
+        document.querySelector('.container').style.display = 'none';
+        document.getElementById('atc-dashboard').style.display = 'block';
+    } else {
+        alert('Only ATC dashboard is implemented in this demo.');
+    }
+});
+</script>
+</body>
+</html>

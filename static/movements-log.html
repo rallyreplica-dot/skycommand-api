@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Movements Log</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+                .header-controls {
+                    display: flex;
+                    flex-direction: row;
+                    align-items: center;
+                    gap: 18px;
+                    justify-content: flex-end;
+                    width: auto;
+                }
+                .show-only-container {
+                    display: flex;
+                    flex-direction: row;
+                    align-items: center;
+                    gap: 8px;
+                }
+                .show-only-label {
+                    font-size: 1em;
+                    font-weight: 600;
+                    margin-right: 4px;
+                }
+                #showOnlyDropdown {
+                    font-size: 1em;
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    border: 1px solid #1976d2;
+                    background: #fff;
+                    color: #1976d2;
+                    font-family: inherit;
+                    text-transform: uppercase;
+                }
+            .header-title {
+                flex: 1 1 100%;
+                text-align: center;
+                font-size: 2.2em;
+                margin: 0;
+                letter-spacing: 0.06em;
+            }
+        .header {
+            display: flex;
+            flex-direction: row;
+            align-items: flex-start;
+            justify-content: space-between;
+            width: 100%;
+            margin-bottom: 16px;
+        }
+        .calendar-container {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+    /* Sidebar styles */
+    #lookupSidebar {
+        position: fixed;
+        left: 0;
+        top: 0;
+        width: 320px;
+        height: 100vh;
+        background: #f4f8fd;
+        border-right: 2px solid #1976d2;
+        box-shadow: 2px 0 12px rgba(0,0,0,0.08);
+        z-index: 1000;
+        padding: 18px 12px 12px 12px;
+        transition: transform 0.2s;
+        transform: translateX(-100%);
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+    }
+    #lookupSidebar.open { transform: translateX(0); }
+    #lookupSidebar h2 { margin-top: 0; font-size: 1.2em; color: #1976d2; }
+    #lookupSidebar label { font-weight: 600; }
+    #lookupSidebar input[type="text"] { width: 90%; font-size: 1em; margin-bottom: 6px; }
+    #lookupSidebar .lookup-result { font-size: 0.98em; margin-bottom: 10px; color: #222; }
+    #lookupSidebar .close-btn {
+        position: absolute; right: 10px; top: 10px; background: #1976d2; color: #fff; border: none; border-radius: 4px; padding: 2px 10px; font-size: 1.1em; cursor: pointer;
+    }
+    #openSidebarBtn {
+        position: fixed; left: 8px; top: 12px; z-index: 1100; background: #1976d2; color: #fff; border: none; border-radius: 4px; padding: 6px 16px; font-size: 1em; font-weight: 600; cursor: pointer;
+    }
+    /* Spreadsheet table styles */
+    html, body, input, button, select, textarea, .movements-log, .movements-log th, .movements-log td, .header, label, .lookup-result, #lookupSidebar, #openSidebarBtn {
+        font-family: 'Consolas', 'Menlo', 'Monaco', Arial, sans-serif !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.04em;
+    }
+    .movements-log {
+        border-collapse: collapse;
+        width: 100%;
+        font-family: 'Consolas', 'Menlo', 'Monaco', monospace;
+        font-size: 1em;
+        background: #fff;
+        margin-bottom: 24px;
+        table-layout: fixed;
+    }
+    .movements-log th, .movements-log td {
+        border: 1px solid #b0b0b0;
+        padding: 0 6px;
+        min-width: 80px;
+        max-width: 220px;
+        white-space: nowrap !important;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        text-align: left;
+        background: #fff;
+        transition: background 0.15s;
+        height: 1.2em !important;
+        line-height: 1.2em !important;
+        vertical-align: middle !important;
+    }
+    .movements-log th.col-registration, .movements-log td:first-child {
+        width: 8ch;
+        min-width: 8ch;
+        max-width: 8ch;
+    }
+    .movements-log th.col-name, .movements-log td:nth-child(8) {
+        width: 30ch !important;
+        min-width: 30ch !important;
+        max-width: 30ch !important;
+    }
+    .movements-log th.col-pob, .movements-log td:nth-child(9) {
+        width: 5ch !important;
+        min-width: 5ch !important;
+        max-width: 5ch !important;
+    }
+    .movements-log tr {
+        height: 1.2em !important;
+        min-height: 1.2em !important;
+        max-height: 1.2em !important;
+    }
+    .movements-log th {
+        background: #e3eefa;
+        font-weight: bold;
+        color: #1976d2;
+        border-bottom: 2px solid #1976d2;
+        cursor: pointer;
+    }
+    .movements-log tr.landaway td {
+        background: #90c3fa !important;
+        border-color: #0d47a1 !important;
+    }
+    .movements-log tr.circuit td {
+        background: #fff !important;
+        border-color: #424242 !important;
+    }
+    .movements-log tr.local td {
+        background: #ff7eb9 !important;
+        border-color: #ad1457 !important;
+    }
+    .movements-log tr.arrival td {
+        background: #ffe066 !important;
+        border-color: #bfa600 !important;
+    }
+    .movements-log tr.overflight td {
+        background: #6ee7a7 !important;
+        border-color: #008c3a !important;
+    }
+    .movements-log tr:nth-child(even) td {
+        background: #f7fafd;
+    }
+    .movements-log tr:hover td {
+        background: #e0f3ff;
+    }
+    .movements-log td[contenteditable="true"]:focus {
+        outline: 2px solid #1976d2;
+        background: #fffbe6;
+    }
+    .movements-log td[contenteditable="true"]:hover {
+        background: #f0f8ff;
+    }
+    .movements-log td {
+        cursor: pointer;
+    }
+    @media (max-width: 900px) {
+        .movements-log th, .movements-log td { font-size: 0.95em; padding: 4px 4px; }
+    }
+    @media (max-width: 600px) {
+        #lookupSidebar { width: 98vw; }
+        .movements-log th, .movements-log td { font-size: 0.9em; padding: 2px 2px; }
+    }
+</style>
+</head>
+<body>
+        <button id="openSidebarBtn">Lookup</button>
+        <div id="lookupSidebar">
+            <button class="close-btn" onclick="document.getElementById('lookupSidebar').classList.remove('open')">×</button>
+            <h2>ATC Lookup</h2>
+            <div>
+                <label for="airlineInput">Airline ICAO (trigraph) or Callsign:</label><br>
+                <input type="text" id="airlineInput" placeholder="e.g. BAW or Speedbird">
+                <div class="lookup-result" id="airlineResult"></div>
+            </div>
+            <div>
+                <label for="airportInput">Airport ICAO or Name:</label><br>
+                <input type="text" id="airportInput" placeholder="e.g. EGSX or Stapleford">
+                <div class="lookup-result" id="airportResult"></div>
+            </div>
+            <div>
+                <label for="regInput">Aircraft Registration:</label><br>
+                <input type="text" id="regInput" placeholder="e.g. G-ABCD or 9H-QBE">
+                <div class="lookup-result" id="regResult"></div>
+            </div>
+        </div>
+    <div class="header">
+        <h1 class="header-title">Movements Log</h1>
+        <div class="header-controls">
+            <div class="show-only-container">
+                <label for="showOnlyDropdown" class="show-only-label">Show Only:</label>
+                <select id="showOnlyDropdown">
+                    <option value="">All</option>
+                    <option value="Departures">Departures</option>
+                    <option value="Arrivals">Arrivals</option>
+                    <option value="Local">Local</option>
+                    <option value="Circuits">Circuits</option>
+                </select>
+            </div>
+            <div class="calendar-container">
+                <input type="date" id="log-date" style="font-size:1.1em;padding:4px 8px;border-radius:4px;border:1px solid #1976d2;">
+            </div>
+        </div>
+        <script>
+        // Removed import/export/reset/sample logic
+        </script>
+    </div>
+    <div class="log-table-container">
+        <table class="movements-log">
+            <colgroup>
+                <col style="width:8ch;min-width:8ch;max-width:8ch;">
+                <col>
+                <col style="width:6ch;min-width:6ch;max-width:6ch;">
+                <col style="width:40ch;min-width:40ch;max-width:40ch;">
+                <col style="width:7ch;min-width:7ch;max-width:7ch;">
+                <col style="width:7ch;min-width:7ch;max-width:7ch;">
+                <col style="width:40ch;min-width:40ch;max-width:40ch;">
+                <col style="width:30ch;min-width:30ch;max-width:30ch;">
+                <col style="width:5ch;min-width:5ch;max-width:5ch;">
+            </colgroup>
+            <thead>
+                <tr>
+                    <th class="col-registration" id="sort-reg" style="cursor:pointer;">Registration</th>
+                    <th class="col-callsign">Callsign</th>
+                    <th class="col-type">Type</th>
+                    <th class="col-to">TO</th>
+                    <th class="col-atd" id="sort-atd" style="cursor:pointer;">ATD</th>
+                    <th class="col-ata" id="sort-ata" style="cursor:pointer;">ATA</th>
+                    <th class="col-from">FROM</th>
+                    <th class="col-name">Name</th>
+                    <th class="col-pob">POB</th>
+                </tr>
+            </thead>
+            <tbody id="movementsLogBody">
+            </tbody>
+        </table>
+    </div>
+</body>
+<script>
+// Helper: Parse CSV text into array of objects
+function parseCSV(csv, delimiter = ',') {
+    const lines = csv.split(/\r?\n/).filter(line => line.trim().length > 0);
+    const headers = lines[0].split(delimiter).map(h => h.replace(/^"|"$/g, ''));
+    return lines.slice(1).map(line => {
+        const values = [];
+        let inQuotes = false, value = '', i = 0;
+        while (i < line.length) {
+            const char = line[i];
+            if (char === '"') {
+                if (inQuotes && line[i + 1] === '"') {
+                    value += '"';
+                    i++;
+                } else {
+                    inQuotes = !inQuotes;
+                }
+            } else if (char === delimiter && !inQuotes) {
+                values.push(value);
+                value = '';
+            } else {
+                value += char;
+            }
+            i++;
+        }
+        values.push(value);
+        const obj = {};
+        headers.forEach((h, idx) => obj[h] = values[idx] !== undefined ? values[idx] : '');
+        return obj;
+    });
+}
+
+// Load airports.csv and build ICAO code to name map
+let icaoToName = {};
+fetch('assets/airports_europe_clean.csv')
+    .then(resp => resp.text())
+    .then(csv => {
+        const airports = parseCSV(csv);
+        // ICAO code is in 'ident' or 'icao_code' or 'gps_code' (use 'ident' for most cases)
+        airports.forEach(ap => {
+            // Only include airports in Europe (continent == 'EU')
+            if (ap.continent && ap.continent.toUpperCase() === 'EU' && ap.name) {
+                const codes = [ap.ident, ap.icao_code, ap.gps_code].map(x => (x||'').toUpperCase());
+                codes.forEach(code => {
+                    if (code) {
+                        icaoToName[code] = ap.name;
+                    }
+                });
+            }
+        });
+        window.airportLookupReady = true;
+        renderMovementsLog();
+    })
+    .catch(() => {
+        // If CSV fails to load, fallback to ICAO codes
+        renderMovementsLog();
+    });
+
+// Render movements log into the table, replacing ICAO codes with airport names
+let logSortKey = 'timestamp';
+let logSortAsc = true;
+let logFilter = '';
+function renderMovementsLog() {
+    let log = [];
+    try { log = JSON.parse(localStorage.getItem('movementsLog') || '[]'); } catch {}
+    // If log is empty, show nothing (no sample)
+    if (!log || !Array.isArray(log) || log.length === 0) {
+        log = [];
+    }
+        // Filter by movement type
+        if (logFilter) {
+            const filter = logFilter.toUpperCase();
+            if (filter === 'DEPARTURES') {
+                log = log.filter(entry => (entry.colorClass||'').toUpperCase() === 'LANDAWAY');
+            } else if (filter === 'ARRIVALS') {
+                log = log.filter(entry => (entry.colorClass||'').toUpperCase() === 'ARRIVAL');
+            } else if (filter === 'LOCAL') {
+                log = log.filter(entry => (entry.colorClass||'').toUpperCase() === 'LOCAL');
+            } else if (filter === 'CIRCUITS') {
+                log = log.filter(entry => (entry.colorClass||'').toUpperCase() === 'CIRCUIT');
+            }
+        }
+    // Sort
+    log.sort((a, b) => {
+        let ka = (a[logSortKey]||'').toUpperCase ? (a[logSortKey]||'').toUpperCase() : (a[logSortKey]||'');
+        let kb = (b[logSortKey]||'').toUpperCase ? (b[logSortKey]||'').toUpperCase() : (b[logSortKey]||'');
+        if (logSortKey === 'atd' || logSortKey === 'ata') {
+            // Sort times as HH:MM
+            return logSortAsc ? ka.localeCompare(kb) : kb.localeCompare(ka);
+        }
+        if (ka < kb) return logSortAsc ? -1 : 1;
+        if (ka > kb) return logSortAsc ? 1 : -1;
+        return 0;
+    });
+    const tbody = document.getElementById('movementsLogBody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    log.forEach((entry, idx) => {
+        // Replace ICAO code with airport name if possible, and suppress EGSX as required
+        let toDisplay = entry.to || '';
+        let fromDisplay = entry.from || '';
+        // Enhanced lookup: split on '-' and show names if found
+        function lookupName(val) {
+            if (!val) return '';
+            let code = val.trim().toUpperCase();
+            if (code.includes('-')) {
+                return code.split('-').map(part => icaoToName[part] || part).join(' - ');
+            }
+            return icaoToName[code] || code;
+        }
+        // Debug: Show what is being looked up
+        console.log('Entry:', entry);
+        console.log('Looking up TO:', toDisplay, 'Result:', lookupName(toDisplay));
+        console.log('Looking up FROM:', fromDisplay, 'Result:', lookupName(fromDisplay));
+
+        // Use enhanced lookup for display
+        toDisplay = lookupName(toDisplay);
+        fromDisplay = lookupName(fromDisplay);
+        // For departures (landaway):
+        // - If 'to' is in the form 'EGTR-XXXX', only show XXXX (the destination code, not airport name)
+        // - If 'to' is just 'EGTR', show blank
+        // - Suppress 'from' field
+        if ((entry.colorClass||'').toUpperCase() === 'LANDAWAY') {
+            // Always suppress EGSX in 'To' for Landaway
+            let toVal = (entry.to||'').replace(/\s+/g, '').toUpperCase();
+            const depAirfield = 'EGSX';
+            if (toVal.startsWith(depAirfield + '-')) {
+                let dest = toVal.substring(depAirfield.length + 1); // everything after 'EGSX-'
+                toDisplay = icaoToName[dest] || dest;
+            } else if (toVal === depAirfield) {
+                toDisplay = '';
+            } else {
+                // If 'to' is just a destination code, show it (as name if available)
+                toDisplay = icaoToName[toVal] || toVal;
+            }
+            fromDisplay = '';
+        } else if ((entry.colorClass||'').toUpperCase() === 'OVERFLIGHT' || (entry.colorClass||'').toUpperCase() === 'TRANSIT') {
+            // For overflight/transit, if 'to' is in the form 'FROM-TO', only show TO in 'To' column
+            let toVal = (entry.to||'').replace(/\s+/g, '').toUpperCase();
+            let fromVal = (entry.from||'').replace(/\s+/g, '').toUpperCase();
+            if (/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(toVal)) {
+                let parts = toVal.split('-');
+                toDisplay = icaoToName[parts[1]] || parts[1];
+            } else {
+                toDisplay = icaoToName[toVal] || toVal;
+            }
+            if (fromVal === 'EGSX') fromDisplay = '';
+            else if (icaoToName[fromDisplay.toUpperCase()]) fromDisplay = icaoToName[fromDisplay.toUpperCase()];
+        } else {
+            // For local/overflight/circuit: if 'to' is 'XXXX-XXXX' and both are the same, show only 'XXXX'
+            let toVal = (entry.to||'').replace(/\s+/g, '').toUpperCase();
+            if (/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(toVal)) {
+                let [a, b] = toVal.split('-');
+                if (a === b) {
+                    toDisplay = a;
+                } else {
+                    if (icaoToName[toDisplay.toUpperCase()]) toDisplay = icaoToName[toDisplay.toUpperCase()];
+                }
+            } else {
+                if (icaoToName[toDisplay.toUpperCase()]) toDisplay = icaoToName[toDisplay.toUpperCase()];
+            }
+            if (icaoToName[fromDisplay.toUpperCase()]) fromDisplay = icaoToName[fromDisplay.toUpperCase()];
+            // Suppress EGSX in 'from' for all rows
+            if ((entry.from||'').toUpperCase() === 'EGSX') fromDisplay = '';
+            // Suppress 'to' for arrivals (from line)
+            if ((entry.colorClass||'').toUpperCase() === 'ARRIVAL') toDisplay = '';
+        }
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td contenteditable="true" data-key="reg">${(entry.reg || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
+            <td contenteditable="true" data-key="callsign">${(entry.callsign || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
+            <td contenteditable="true" data-key="type">${(entry.type || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
+            <td contenteditable="true" data-key="to">${(toDisplay || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
+            <td contenteditable="true" data-key="atd">${(entry.atd || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
+            <td contenteditable="true" data-key="ata">${(entry.ata || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
+            <td contenteditable="true" data-key="from">${(fromDisplay || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
+            <td contenteditable="true" data-key="name">${(entry.name || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
+            <td contenteditable="true" data-key="pob">${(entry.pob || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
+        `;
+        if (entry.colorClass) tr.classList.add(entry.colorClass);
+        // Save on blur and prevent line breaks
+        tr.querySelectorAll('[contenteditable]').forEach(cell => {
+            cell.addEventListener('blur', function() {
+                let newVal = this.innerText.replace(/\s+/g, ' ').replace(/\n/g, '').trim();
+                let key = this.getAttribute('data-key');
+                entry[key] = newVal;
+                let logAll = JSON.parse(localStorage.getItem('movementsLog') || '[]');
+                logAll[idx][key] = newVal;
+                localStorage.setItem('movementsLog', JSON.stringify(logAll));
+                this.innerText = newVal;
+            });
+            cell.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') { e.preventDefault(); this.blur(); }
+            });
+            cell.addEventListener('paste', function(e) {
+                e.preventDefault();
+                let text = (e.clipboardData || window.clipboardData).getData('text');
+                text = text.replace(/\s+/g, ' ').replace(/\n/g, '');
+                document.execCommand('insertText', false, text);
+            });
+        });
+        tbody.appendChild(tr);
+    });
+}
+// Sorting
+document.getElementById('sort-reg').onclick = function() {
+    logSortKey = 'reg'; logSortAsc = !logSortAsc; renderMovementsLog();
+};
+document.getElementById('sort-atd').onclick = function() {
+    logSortKey = 'atd'; logSortAsc = !logSortAsc; renderMovementsLog();
+};
+document.getElementById('sort-ata').onclick = function() {
+    logSortKey = 'ata'; logSortAsc = !logSortAsc; renderMovementsLog();
+};
+// Filter
+    document.getElementById('showOnlyDropdown').addEventListener('change', function() {
+        logFilter = this.value.trim();
+        renderMovementsLog();
+    });
+// --- AIRLINE LOOKUP ---
+let trigraphToCallsign = {};
+let callsignToTrigraph = {};
+fetch('assets/data/airlines.dat.txt')
+    .then(resp => resp.text())
+    .then(txt => {
+        // Use robust CSV parser for airline data
+        const lines = txt.split(/\r?\n/).filter(line => line.trim().length > 0 && !line.startsWith('#'));
+        const airlineRows = lines.map(line => {
+            const values = [];
+            let inQuotes = false, value = '', i = 0;
+            while (i < line.length) {
+                const char = line[i];
+                if (char === '"') {
+                    if (inQuotes && line[i + 1] === '"') {
+                        value += '"';
+                        i++;
+                    } else {
+                        inQuotes = !inQuotes;
+                    }
+                } else if (char === ',' && !inQuotes) {
+                    values.push(value);
+                    value = '';
+                } else {
+                    value += char;
+                }
+                i++;
+            }
+            values.push(value);
+            return values;
+        });
+        airlineRows.forEach(parts => {
+            if (parts.length < 7) return;
+            let icao = parts[4]?.replace(/(^"|"$)/g, '');
+            let callsign = parts[5]?.replace(/(^"|"$)/g, '');
+            if (icao && callsign) {
+                trigraphToCallsign[icao.toUpperCase()] = callsign;
+                callsignToTrigraph[callsign.toUpperCase()] = icao;
+            }
+        });
+    });
+
+// --- AIRCRAFT REGISTRATION LOOKUP (LOAD ON PAGE LOAD) ---
+let regToType = {};
+let aircraftDbLoaded = false;
+let regToTypeWeight = {};
+function loadAircraftDb(primary, fallback) {
+    fetch(primary)
+        .then(resp => {
+            if (!resp.ok) throw new Error('Primary not found');
+            return resp.text();
+        })
+        .then(parseAircraftDb)
+        .catch(() => {
+            if (fallback) {
+                fetch(fallback)
+                    .then(resp => resp.text())
+                    .then(parseAircraftDb)
+                    .catch(() => {
+                        aircraftDbLoaded = 'error';
+                    });
+            } else {
+                aircraftDbLoaded = 'error';
+            }
+        });
+}
+function parseAircraftDb(txt) {
+    txt.split(/\r?\n/).forEach(line => {
+        let parts = line.trim().split(/\s+/);
+        if (parts.length >= 2) {
+            // Always use first field as reg, second as type, third as weight (if present)
+            let reg = parts[0].toUpperCase().replace(/[-\s]/g, '');
+            let type = parts[1] ? parts[1].toUpperCase() : '';
+            let weight = parts[2] ? parts[2] : '';
+            if (reg) {
+                regToTypeWeight[reg] = { type, weight };
+                // Add G- prefix and no prefix variants for UK regs
+                if (reg.startsWith('G') && !reg.startsWith('G-')) {
+                    regToTypeWeight['G-' + reg.substring(1)] = { type, weight };
+                }
+                if (reg.startsWith('G-')) {
+                    regToTypeWeight[reg.replace('G-', 'G')] = { type, weight };
+                }
+                // Debug: Log each registration loaded
+                if (reg.includes('OLEA')) {
+                    console.log('Loaded reg:', reg, 'type:', type, 'weight:', weight);
+                }
+            }
+        }
+    });
+    // Debug: Log all keys loaded
+    console.log('All loaded aircraft regs:', Object.keys(regToTypeWeight).filter(k => k.includes('OLEA')));
+    aircraftDbLoaded = true;
+}
+// Try new file, fallback to original
+loadAircraftDb('assets/aircraft database/270326_with_weight.txt', 'assets/aircraft database/270326.txt');
+
+// --- SIDEBAR LOGIC ---
+document.getElementById('openSidebarBtn').onclick = function() {
+    document.getElementById('lookupSidebar').classList.add('open');
+};
+
+document.getElementById('airlineInput').addEventListener('input', function() {
+    const val = this.value.trim().toUpperCase();
+    let result = '';
+    if (val.length === 3 && trigraphToCallsign[val]) {
+        result = `<b>Callsign:</b> ${trigraphToCallsign[val]}`;
+    } else if (callsignToTrigraph[val]) {
+        result = `<b>ICAO:</b> ${callsignToTrigraph[val]}`;
+    } else {
+        result = 'No match found.';
+    }
+    document.getElementById('airlineResult').innerHTML = result;
+});
+
+document.getElementById('airportInput').addEventListener('input', function() {
+    if (!window.airportLookupReady) {
+        document.getElementById('airportResult').innerHTML = '<em>Loading database...</em>';
+        return;
+    }
+    if (!icaoToName || Object.keys(icaoToName).length === 0) {
+        document.getElementById('airportResult').innerHTML = '<span style="color:red">Airport DB failed to load.</span>';
+        return;
+    }
+    const val = this.value.trim().toUpperCase();
+    let result = '';
+    if (!val) {
+        result = '';
+    } else if (icaoToName[val]) {
+        result = `<b>Name:</b> ${icaoToName[val]}`;
+    } else {
+        // Try partial match on name
+        const matches = Object.entries(icaoToName).filter(([code, name]) => name.toUpperCase().includes(val));
+        if (matches.length > 0) {
+            result = matches.slice(0, 5).map(([code, name]) => `<b>${code}:</b> ${name}`).join('<br>');
+        } else {
+            result = 'No match found.';
+        }
+    }
+    document.getElementById('airportResult').innerHTML = result;
+});
+
+// --- REGISTRATION INPUT LOGIC (ALWAYS ACTIVE) ---
+document.getElementById('regInput').addEventListener('input', function() {
+    // Remove spaces and hyphens for lookup
+    let val = this.value.replace(/[-\s]/g, '').toUpperCase();
+    let result = '';
+    if (aircraftDbLoaded === 'error') {
+        result = '<span style="color:red">Aircraft DB failed to load.</span>';
+    } else if (!aircraftDbLoaded) {
+        result = '<em>Loading database...</em>';
+    } else if (val) {
+        // Try all reasonable forms for UK regs
+        let lookup = regToTypeWeight[val]
+            || regToTypeWeight[val.replace(/^G-/, 'G')]
+            || regToTypeWeight['G-' + val.replace(/^G-/, '')]
+            || regToTypeWeight[val.replace(/^G/, 'G-')];
+        // Debug: Log lookup attempts
+        console.log('Lookup input:', this.value, 'normalized:', val);
+        console.log('Tried keys:', val, val.replace(/^G-/, 'G'), 'G-' + val.replace(/^G-/, ''), val.replace(/^G/, 'G-'));
+        if (lookup) {
+            console.log('Lookup found:', lookup);
+        } else {
+            console.log('Lookup not found for:', val);
+        }
+        if (lookup) {
+            const { type, weight } = lookup;
+            result = `<b>ICAO Type:</b> ${type}` + (weight ? ` <span style='color:#888'>(MTOW: ${weight})</span>` : '');
+        } else {
+            result = 'No match found.';
+        }
+    } else {
+        result = '';
+    }
+    document.getElementById('regResult').innerHTML = result;
+});
+</script>
+</body>
+</html>

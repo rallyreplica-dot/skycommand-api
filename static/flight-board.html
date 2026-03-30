@@ -1,0 +1,1265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flight Board</title>
+    <!-- Google Fonts: Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* Pulse animation for pending bookings - more obvious */
+        @keyframes pendingPulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.95), 0 0 32px 8px rgba(255, 193, 7, 0.5);
+                border-color: #ffc107;
+            }
+            50% {
+                box-shadow: 0 0 32px 24px rgba(255, 193, 7, 0.85), 0 0 64px 32px rgba(255, 193, 7, 0.35);
+                border-color: #ffc107;
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.95), 0 0 32px 8px rgba(255, 193, 7, 0.5);
+                border-color: #ffc107;
+            }
+        }
+        .pending-pulse {
+            animation: pendingPulse 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+            border-color: #ffc107 !important;
+            box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.95), 0 0 32px 8px rgba(255, 193, 7, 0.5);
+            z-index: 2;
+        }
+        /* Make all text uppercase */
+        html, body, .flightboard-header, .flightboard-header h1, .flightboard-header .header-logo, .flightboard-inputs, .flightboard-inputs label, .flightboard-inputs input, .flightboard-inputs button, .lane-label, .lane-label-out, .lane, .flight-strip, .strip-row, .strip-aircraft-box, .strip-route-box, .strip-final-box, .route-content, .aircraft-reg, .aircraft-type, .aircraft-callsign, .aircraft-icao-speech, .final-row, .final-booking, .final-pob, .quarter, .strip-extra, .modern-btn {
+            text-transform: uppercase !important;
+        }
+                            /* Flight strip category colors - deeper, more saturated */
+                            .flight-strip.landaway { background: #90c3fa !important; border-color: #0d47a1; }
+                            .flight-strip.circuit { background: #fff !important; border-color: #424242; }
+                            .flight-strip.local { background: #ff7eb9 !important; border-color: #ad1457; }
+                            .flight-strip.arrival { background: #ffe066 !important; border-color: #bfa600; }
+                            .flight-strip.overflight { background: #6ee7a7 !important; border-color: #008c3a; }
+                        /* Prevent flight strip from shrinking in swim lanes */
+                        #flight-strip-container {
+                            min-width: 240px;
+                            display: flex;
+                            flex-direction: column;
+                            align-items: center;
+                            justify-content: center;
+                            width: 100%;
+                            height: 100%;
+                            margin-top: 6px;
+                        }
+                        .lane-booked-out-top, .lane-booked-out-bottom,
+                        .lane-half, .lane-circuit-top, .lane-circuit-bottom {
+                            position: relative;
+                        }
+                        .lane-booked-out-top #flight-strip-container,
+                        .lane-booked-out-bottom #flight-strip-container,
+                        .lane-half #flight-strip-container,
+                        .lane-circuit-top #flight-strip-container,
+                        .lane-circuit-bottom #flight-strip-container {
+                            position: absolute;
+                            top: 50%;
+                            left: 50%;
+                            transform: translate(-50%, -50%);
+                            margin-top: 0;
+                        }
+                        .flight-strip {
+                            flex-shrink: 0 !important;
+                        }
+                /* Flight strip styles restored */
+                .flight-strip {
+                    margin: 6px auto;
+                    background: #fff;
+                    border: 2px solid #1976d2;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+                    max-width: 320px;
+                    min-width: 220px;
+                    width: 95%;
+                    padding: 2px 4px;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 2px;
+                    height: 80px;
+                    min-height: 80px;
+                    box-sizing: border-box;
+                }
+                .strip-row {
+                    display: flex;
+                    flex-direction: row;
+                    align-items: stretch;
+                    gap: 2px;
+                    height: 100%;
+                }
+                .strip-quarter-box {
+                    width: 44px;
+                    height: 100%;
+                    min-width: 44px;
+                    display: grid;
+                            
+                    grid-template-rows: 1fr 1fr;
+                    border: 2px solid #1976d2;
+                    border-radius: 4px;
+                    overflow: hidden;
+                }
+                .quarter input[type="text"] {
+                    width: 90%;
+                    font-size: 0.7em;
+                    border: none;
+                    background: transparent;
+                    text-align: center;
+                    outline: none;
+                }
+                .quarter {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: 0.65em;
+                    font-weight: 500;
+                    border: 1px solid #90caf9;
+                    min-height: 14px;
+                    min-width: 10px;
+                    padding: 0 1px;
+                }
+                .top-left { grid-area: 1 / 1 / 2 / 2; }
+                .top-right { grid-area: 1 / 2 / 2 / 3; }
+                .bottom-left { grid-area: 2 / 1 / 3 / 2; }
+                .bottom-right { grid-area: 2 / 2 / 3 / 3; }
+                .strip-aircraft-box {
+                    min-width: 40px;
+                    flex: 2 1 0;
+                    border: 2px solid #1976d2;
+                    border-radius: 4px;
+                    padding: 1px 2px;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 0;
+                    background: transparent;
+                    justify-content: center;
+                }
+                .aircraft-row {
+                    display: flex;
+                    flex-direction: row;
+                    justify-content: space-between;
+                    font-size: 0.65em;
+                    font-weight: 500;
+                }
+                .aircraft-reg {
+                    font-size: 0.65em;
+                    color: #000 !important;
+                    font-weight: 600;
+                    visibility: visible;
+                }
+                .aircraft-type {
+                    font-size: 0.65em;
+                    color: #1976d2;
+                    font-weight: 600;
+                }
+                .aircraft-callsign {
+                    text-align: center;
+                    font-size: 0.8em;
+                    font-weight: bold;
+                    margin: 0;
+                }
+                .aircraft-icao-speech {
+                    text-align: center;
+                    font-size: 0.65em;
+                    color: #333;
+                    font-style: italic;
+                    margin-bottom: 0;
+                }
+                .strip-route-box {
+                    min-width: 24px;
+                    flex: 1 1 0;
+                    border: 2px solid #1976d2;
+                    border-radius: 4px;
+                    display: flex;
+                    align-items: flex-end;
+                    justify-content: center;
+                    padding: 0 1px 1px 1px;
+                    background: transparent;
+                }
+                .route-content {
+                    width: 100%;
+                    text-align: center;
+                    font-size: 0.65em;
+                    font-weight: 500;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    height: 100%;
+                }
+
+                /* Make C and L much larger and centered for Circuit and Local */
+                .flight-strip.circuit .route-content,
+                .flight-strip.local .route-content {
+                    font-size: 2.2em;
+                    font-weight: bold;
+                    color: #000 !important;
+                    letter-spacing: 0.05em;
+                }
+                .strip-final-box {
+                    min-width: 16px;
+                    max-width: 38px;
+                    flex: 0 1 32px;
+                    border: 2px solid #1976d2;
+                    border-radius: 4px;
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: space-between;
+                    background: transparent;
+                    padding: 1px 1px;
+                    gap: 0;
+                }
+                .final-row {
+                    display: flex;
+                    flex-direction: row;
+                    align-items: center;
+                    justify-content: space-between;
+                    font-size: 0.65em;
+                    margin-bottom: 0;
+                }
+                .final-tick {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    min-width: 10px;
+                }
+                .final-tick input[type="checkbox"] {
+                    width: 10px;
+                    height: 10px;
+                    accent-color: #1976d2;
+                    cursor: pointer;
+                }
+                .tick-label {
+                    margin-left: 1px;
+                    font-size: 0.7em;
+                    color: #1976d2;
+                }
+                .final-booking {
+                    min-width: 10px;
+                    min-height: 8px;
+                    border: 1px solid #90caf9;
+                    border-radius: 2px;
+                    background: #fff;
+                    text-align: center;
+                    font-size: 0.65em;
+                    font-weight: 500;
+                }
+                @media (max-width: 900px) {
+                    .flight-strip { max-width: 98vw; padding: 1px 1vw; }
+                    .strip-row { flex-direction: column; gap: 1px; }
+                    .strip-aircraft-box, .strip-route-box, .strip-final-box, .strip-quarter-box { min-width: unset; width: 100%; }
+                }
+        body {
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #1761a0 0%, #1e2a38 100%);
+            font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+        }
+
+        .flightboard-header {
+            width: 100vw;
+            background: rgba(255,255,255,0.97);
+            box-shadow: 0 2px 16px rgba(0,0,0,0.08);
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            padding: 0 0 0 32px;
+            height: 64px;
+            margin-bottom: 12px;
+        }
+        .flightboard-header h1 {
+            font-size: 2.1rem;
+            font-weight: 700;
+            color: #1761a0;
+            letter-spacing: 0.04em;
+            margin: 0;
+            display: flex;
+            align-items: center;
+        }
+        .flightboard-header .header-logo {
+            width: 38px;
+            height: 38px;
+            margin-right: 18px;
+            background: url('https://img.icons8.com/ios-filled/50/1976d2/airport.png') no-repeat center/contain;
+            display: inline-block;
+        }
+        .swim-lanes-row {
+            display: flex;
+            flex-direction: row;
+            align-items: stretch;
+            margin: 0 0 0 1vw;
+            height: calc(100vh - 40px);
+            width: 98vw;
+            box-sizing: border-box;
+        }
+        .lane {
+            background: #2170b8;
+            border-radius: 0;
+            flex: 1 1 0;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            margin: 0 2px;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+        }
+        .lane-booked-out-split {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            background: #2170b8;
+            border-radius: 0;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+        }
+
+        /* Chevron border for Completed section */
+        .lane-booked-out-bottom {
+            border-image: repeating-linear-gradient(135deg, #ffd600 0 14px, #222 14px 28px) 45;
+            border-width: 12px;
+            border-style: solid;
+            box-sizing: border-box;
+        }
+        .lane-booked-out-top {
+            flex: 9 1 0;
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            justify-content: flex-start;
+            border-bottom: 2px solid #b3e0fc;
+            overflow: hidden;
+        }
+        .lane-booked-out-bottom {
+            flex: 1 1 0;
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+            background: #e3f4fd;
+            border-radius: 0;
+            padding-top: 8px;
+            min-height: 36px;
+        }
+
+        .lane-label.lane-label-small {
+            margin-top: 0;
+            margin-bottom: 0;
+            padding: 0;
+        }
+        .lane-label {
+            text-align: center !important;
+            font-weight: 600;
+            font-size: 1.1rem;
+            text-transform: uppercase !important;
+            justify-content: center !important;
+            display: flex !important;
+            align-items: center !important;
+        }
+        .lane-label-out {
+            width: 100%;
+            text-align: center !important;
+            text-transform: uppercase !important;
+            justify-content: center !important;
+            display: flex !important;
+            align-items: center !important;
+        }
+        .lane-taxying {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+        .lane-half {
+            display: flex;
+            align-items: flex-start;
+            justify-content: flex-start;
+            width: 100%;
+            flex: 1 1 0;
+        }
+        .lane-taxying-in {
+            flex-basis: 50%;
+            flex-grow: 1;
+            border-bottom: 2px solid #b3e0fc;
+        }
+        .lane-taxying-out {
+            flex-basis: 50%;
+            flex-grow: 1;
+        }
+        .lane-circuit {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+        .lane-circuit-top {
+            flex-basis: 75%;
+            flex-grow: 3;
+            display: flex;
+            align-items: flex-start;
+            justify-content: flex-start;
+            border-bottom: 2px solid #b3e0fc;
+        }
+        .lane-circuit-bottom {
+            flex-basis: 25%;
+            flex-grow: 1;
+            display: flex;
+            align-items: flex-start;
+            justify-content: flex-start;
+            border: 4px solid #1a365d;
+            border-radius: 0;
+            background: #fff;
+        }
+        .runway-label {
+            border: none;
+            border-radius: 0;
+            padding: 8px 0;
+            font-weight: bold;
+            width: 100%;
+            margin: 0 auto;
+            background: transparent;
+        }
+        @media (max-width: 900px) {
+            .swim-lanes-row { flex-direction: column; min-height: unset; height: unset; }
+            .lane { min-width: unset; height: 200px; }
+        }
+    </style>
+
+</head>
+<body>
+
+    <div class="flightboard-header">
+        <span class="header-logo"></span>
+        <h1>Flight Board</h1>
+    </div>
+
+    <div class="flightboard-inputs" style="display: flex; gap: 24px; margin: 12px 0 18px 12px; align-items: flex-end; background: rgba(255,255,255,0.92); border-radius: 10px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); padding: 12px 24px 10px 24px; max-width: 98vw;">
+        <div class="input-group">
+            <label for="regInput">reg</label>
+            <input id="regInput" type="text" />
+        </div>
+        <div class="input-group">
+            <label for="posnInput">Pos'n</label>
+            <input id="posnInput" type="text" />
+        </div>
+        <div class="input-group">
+            <label for="fromInput">from</label>
+            <input id="fromInput" type="text" />
+        </div>
+        <div class="input-group">
+            <label for="toInput">to</label>
+            <input id="toInput" type="text" />
+        </div>
+        <div class="input-group">
+            <label for="heightInput">height</label>
+            <input id="heightInput" type="text" />
+        </div>
+        <div class="input-group">
+            <label for="headingInput">heading</label>
+            <input id="headingInput" type="text" />
+        </div>
+        <div class="input-group">
+            <label for="pobInput">POB</label>
+            <input id="pobInput" type="text" />
+        </div>
+        <button id="submitBtn" class="modern-btn">Submit</button>
+    </div>
+
+    <style>
+        .flightboard-inputs .input-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-bottom: 0;
+        }
+        .flightboard-inputs label {
+            font-size: 1em;
+            margin-bottom: 2px;
+            color: #1761a0;
+            font-weight: 600;
+            letter-spacing: 0.01em;
+        }
+        .flightboard-inputs input[type="text"] {
+            width: 70px;
+            font-size: 1.1em;
+            text-align: center;
+            padding: 4px 6px;
+            border-radius: 5px;
+            border: 1.5px solid #1976d2;
+            background: #f7fbff;
+            color: #222;
+            font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+            transition: border 0.2s, box-shadow 0.2s;
+        }
+        .flightboard-inputs input[type="text"]:focus {
+            border: 1.5px solid #1761a0;
+            outline: none;
+            box-shadow: 0 0 0 2px #90caf9;
+        }
+        .modern-btn {
+            height: 38px;
+            align-self: flex-end;
+            font-size: 1.08em;
+            padding: 4px 22px;
+            border-radius: 5px;
+            border: none;
+            background: linear-gradient(90deg, #1976d2 60%, #1761a0 100%);
+            color: #fff;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(25,118,210,0.08);
+            letter-spacing: 0.03em;
+            transition: background 0.2s, box-shadow 0.2s;
+        }
+        .modern-btn:hover {
+            background: linear-gradient(90deg, #1761a0 60%, #1976d2 100%);
+            box-shadow: 0 4px 16px rgba(25,118,210,0.13);
+        }
+    </style>
+
+    <!-- Hidden placeholders for JS compatibility -->
+    <div style="display:none">
+        <div id="flightStrip1"></div>
+        <span id="etdTime"></span>
+        <span id="etaTime"></span>
+        <span id="regBox"></span>
+        <span id="callsignBox"></span>
+        <span id="routeBox"></span>
+        <span id="bookingBox"></span>
+        <span class="final-pob"></span>
+    </div>
+    <div class="swim-lanes-row">
+        <div class="lane lane-booked-out-split" data-lane="booked-out">
+            <div class="lane-booked-out-top droppable" data-lane="booked-out-top">
+                <div class="lane-label">Booked Out</div>
+            </div>
+            <div class="lane-booked-out-bottom droppable" data-lane="booked-out-bottom"><div class="lane-label lane-label-small">Completed</div></div>
+        </div>
+        <div class="lane lane-taxying" data-lane="taxying">
+            <div class="lane-half lane-taxying-in droppable" data-lane="taxying-in">
+                <div class="lane-label lane-label-out">Taxying In</div>
+            </div>
+            <div class="lane-half lane-taxying-out droppable" data-lane="taxying-out">
+                <div class="lane-label lane-label-out">Taxying Out</div>
+            </div>
+        </div>
+        <div class="lane lane-circuit" data-lane="circuit">
+            <div class="lane-circuit-top droppable" data-lane="circuit-top">
+                <div class="lane-label lane-label-out">Circuit</div>
+                <!-- Flight strips will be dynamically inserted here -->
+                <div id="flight-strip-container"></div>
+            </div>
+            <div class="lane-circuit-bottom droppable" data-lane="circuit-bottom">
+                <div class="lane-label lane-label-small lane-label-out runway-label">Runway</div>
+            </div>
+        </div>
+        <div class="lane lane-local droppable" data-lane="local">
+            <div class="lane-label">Local Area</div>
+        </div>
+        <div class="lane lane-booked-in droppable" data-lane="booked-in">
+            <div class="lane-label">Booked In</div>
+        </div>
+    </div>
+
+    <script>
+// --- LOAD BOOKINGS FROM API AND CREATE FLIGHT STRIPS ---
+document.addEventListener('DOMContentLoaded', function() {
+    fetch('/bookings')
+        .then(resp => resp.json())
+        .then(bookings => {
+            // Get today's date in YYYY-MM-DD format
+            const today = new Date();
+            const yyyy = today.getFullYear();
+            const mm = String(today.getMonth() + 1).padStart(2, '0');
+            const dd = String(today.getDate()).padStart(2, '0');
+            const todayStr = `${yyyy}-${mm}-${dd}`;
+            bookings.filter(booking => booking.date === todayStr).forEach(booking => {
+                // Map booking fields to createFlightStrip params
+                let reg = booking.aircraft || booking.reg || '';
+                let posn = booking.posn || '';
+                let from = booking.from || booking.departure || '';
+                let to = booking.to || booking.arrival || '';
+                let height = booking.height || '';
+                let heading = booking.heading || '';
+                let pob = booking.pob || '';
+                let status = booking.status || 'pending';
+                let bookingId = booking.id;
+                let {strip, laneSelector} = createFlightStrip({reg, posn, from, to, height, heading, pob, status, bookingId});
+                // Set type if available
+                if (booking.type) {
+                    strip.querySelector('.aircraft-type').textContent = booking.type;
+                }
+                // Place in correct lane
+                let lane = document.querySelector(laneSelector);
+                if (!lane) {
+                    lane = document.querySelector('.lane');
+                }
+                let container = lane.querySelector('#flight-strip-container');
+                if (!container) {
+                    container = document.createElement('div');
+                    container.id = 'flight-strip-container';
+                    const label = lane.querySelector('.lane-label');
+                    if (label && label.nextSibling) {
+                        lane.insertBefore(container, label.nextSibling);
+                    } else {
+                        lane.appendChild(container);
+                    }
+                }
+                container.appendChild(strip);
+                // Add pulse and approve/deny if pending
+                if (strip._shouldPulse) {
+                    strip.classList.add('pending-pulse');
+                    strip._addApproveDeny();
+                }
+            });
+        })
+        .catch(err => {
+            console.error('Failed to load bookings from API:', err);
+        });
+});
+// --- AIRCRAFT TYPE LOOKUP ---
+let regToType = {};
+fetch('assets/aircraft%20database/270326_with_weight.txt')
+    .then(resp => resp.text())
+    .then(txt => {
+        txt.split(/\r?\n/).forEach(line => {
+            // Format: REG [spaces] TYPE [spaces] (optional weight)
+            const match = line.match(/^(\S+)\s+(\S{3,5})/);
+            if (match) {
+                regToType[match[1].toUpperCase()] = match[2].toUpperCase();
+            }
+        });
+    });
+// --- AIRPORTS CSV LOADING FOR NAME→ICAO LOOKUP ---
+let nameToIcao = {};
+let icaoSet = new Set();
+function parseCSV(csv, delimiter = ',') {
+    const lines = csv.split(/\r?\n/).filter(Boolean);
+    const headers = lines[0].split(delimiter).map(h => h.replace(/^"|"$/g, ''));
+    return lines.slice(1).map(line => {
+        // Handle quoted fields with commas
+        const regex = /("[^"]*(?:""[^"]*)*"|[^"'+delimiter+']+)/g;
+        const values = [];
+        let match;
+        let re = new RegExp(regex.source.replace(/\+delimiter\+/g, delimiter), 'g');
+        while ((match = re.exec(line)) !== null) {
+            let val = match[0];
+            if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1).replace(/""/g, '"');
+            values.push(val);
+        }
+        if (values.length !== headers.length) return null;
+        const obj = {};
+        headers.forEach((h, i) => obj[h] = values[i]);
+        return obj;
+    }).filter(Boolean);
+}
+fetch('assets/airports.csv')
+    .then(resp => resp.text())
+    .then(csv => {
+        const airports = parseCSV(csv);
+        airports.forEach(ap => {
+            // ICAO code is in 'ident' or 'icao_code' or 'gps_code'
+            if (ap.ident) icaoSet.add(ap.ident.toUpperCase());
+            if (ap.icao_code) icaoSet.add(ap.icao_code.toUpperCase());
+            if (ap.gps_code) icaoSet.add(ap.gps_code.toUpperCase());
+            // Map name to ICAO (prefer ident)
+            if (ap.name && ap.ident) nameToIcao[ap.name.trim().toUpperCase()] = ap.ident.toUpperCase();
+        });
+    });
+console.log('SCRIPT LOADED');
+
+// Show Landaway (Blue) by default on load
+// document.addEventListener('DOMContentLoaded', function() {
+//     populateFlightStripFromBooking({
+//         etd: '12:00',
+//         eta: '13:00',
+//         registration: '',
+//         type: 'C172',
+//         callsign: 'GNWFS',
+//         icaoSpeech: '',
+//         route: 'EGSX-EGTR',
+//         pob: '3',
+//         category: 'landaway'
+//     });
+// });
+
+// Function to prepopulate flight strip fields from a booking object
+function populateFlightStripFromBooking(booking) {
+    // ETD and ETA
+    document.getElementById('etdTime').textContent = booking.etd || 'ETD';
+    document.getElementById('etaTime').textContent = booking.eta || 'ETA';
+    // Registration, Type, Callsign
+    document.getElementById('regBox').textContent = booking.registration || '';
+    document.querySelector('.aircraft-type').textContent = booking.type || '';
+    document.getElementById('callsignBox').textContent = booking.callsign || '';
+    document.querySelector('.aircraft-icao-speech').textContent = booking.icaoSpeech ? '"' + booking.icaoSpeech + '"' : '';
+    // Route and category logic
+    const BASE = 'EGSX';
+    let route = (booking.route || '').toUpperCase();
+    let routeBox = document.getElementById('routeBox');
+    let strip = document.getElementById('flightStrip1');
+    strip.classList.remove('landaway', 'circuit', 'local', 'arrival', 'overflight');
+    // Circuit
+    if (booking.category && booking.category.toLowerCase() === 'circuit') {
+        strip.classList.add('circuit');
+        routeBox.textContent = 'C';
+    }
+    // Local
+    else if (booking.category && booking.category.toLowerCase() === 'local') {
+        strip.classList.add('local');
+        routeBox.textContent = 'L';
+    }
+    // Landaway (base departure)
+    else if (route.startsWith(BASE + '-') || route.startsWith(BASE + ' ')) {
+        strip.classList.add('landaway');
+        routeBox.textContent = route.substring(0, 9);
+    }
+    // Arrival
+    else if (route.endsWith('-' + BASE) || route.endsWith(' ' + BASE)) {
+        strip.classList.add('arrival');
+        routeBox.textContent = route.substring(0, 9);
+    }
+    // Overflight
+    else {
+        strip.classList.add('overflight');
+        routeBox.textContent = route.substring(0, 9);
+    }
+    document.querySelector('.final-pob').textContent = 'POB';
+    document.getElementById('bookingBox').textContent = booking.pob || '';
+}
+
+// Utility: Get current time in HH:MM format
+function getCurrentTime() {
+    const now = new Date();
+    return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+// Double-click event for ATD and ATA
+document.addEventListener('DOMContentLoaded', function() {
+    const atdInput = document.getElementById('atdInput');
+    const ataInput = document.getElementById('ataInput');
+    if (atdInput) {
+        atdInput.addEventListener('dblclick', function() {
+            atdInput.value = getCurrentTime();
+        });
+    }
+    if (ataInput) {
+        ataInput.addEventListener('dblclick', function() {
+            ataInput.value = getCurrentTime();
+        });
+    }
+});
+
+// Drag and drop for all strips (existing and future)
+function setupDragAndDropForStrips() {
+    document.querySelectorAll('.flight-strip').forEach(strip => {
+        if (!strip.hasAttribute('draggable')) strip.draggable = true;
+        if (!strip.id) strip.id = 'flightStrip-' + Math.random().toString(36).substr(2, 9);
+        if (!strip._dragEventsAttached) {
+            strip.addEventListener('dragstart', function(e) {
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', strip.id);
+                setTimeout(() => strip.classList.add('dragging'), 0);
+            });
+            strip.addEventListener('dragend', function() {
+                strip.classList.remove('dragging');
+            });
+            strip._dragEventsAttached = true;
+        }
+    });
+}
+setupDragAndDropForStrips();
+const observer = new MutationObserver(setupDragAndDropForStrips);
+observer.observe(document.body, {childList: true, subtree: true});
+document.querySelectorAll('.droppable').forEach(dropTarget => {
+    dropTarget.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        dropTarget.classList.add('drag-over');
+    });
+    dropTarget.addEventListener('dragleave', function() {
+        dropTarget.classList.remove('drag-over');
+    });
+    dropTarget.addEventListener('drop', function(e) {
+        e.preventDefault();
+        dropTarget.classList.remove('drag-over');
+        const stripId = e.dataTransfer.getData('text/plain');
+        const stripElem = document.getElementById(stripId);
+        if (!stripElem) return;
+        // If dropped in Completed lane, log and remove
+        if (dropTarget.classList.contains('lane-booked-out-bottom')) {
+            // Extract details from strip
+            const reg = stripElem.querySelector('.aircraft-reg')?.textContent || '';
+            const type = stripElem.querySelector('.aircraft-type')?.textContent || '';
+            let to = stripElem.querySelector('.strip-route-box .route-content')?.textContent || '';
+            const atd = stripElem.querySelector('input[placeholder="ATD"]')?.value || '';
+            const ata = stripElem.querySelector('input[placeholder="ATA"]')?.value || '';
+            let from = (function() {
+                const route = stripElem.querySelector('.strip-route-box .route-content')?.textContent || '';
+                if (route.includes('-')) return route.split('-')[0];
+                return '';
+            })();
+            // Replace L/C with Local/Circuit for log
+            if (to === 'L') to = 'Local';
+            if (to === 'C') to = 'Circuit';
+            if (from === 'L') from = 'Local';
+            if (from === 'C') from = 'Circuit';
+            // Replace ICAO with airfield name if available
+            function icaoToName(icao) {
+                if (!icao) return icao;
+                icao = icao.trim().toUpperCase();
+                // Find matching airport name from airports.csv loaded into icaoSet and nameToIcao
+                // We need a reverse lookup: ICAO code to name
+                if (window.icaoToNameMap && window.icaoToNameMap[icao]) return window.icaoToNameMap[icao];
+                // Fallback: try to build the map if not present
+                if (window.nameToIcao) {
+                    for (const [name, code] of Object.entries(window.nameToIcao)) {
+                        if (code === icao) {
+                            if (!window.icaoToNameMap) window.icaoToNameMap = {};
+                            window.icaoToNameMap[icao] = name;
+                            return name;
+                        }
+                    }
+                }
+                return icao;
+            }
+            to = icaoToName(to);
+            from = icaoToName(from);
+            const name = stripElem.querySelector('.strip-notes')?.value || '';
+            const pob = stripElem.querySelector('.final-booking')?.textContent || '';
+            // Get color class
+            const colorClass = Array.from(stripElem.classList).find(cls => ['landaway','circuit','local','arrival','overflight'].includes(cls)) || '';
+            // Save to localStorage
+            const logEntry = { reg, type, to, atd, ata, from, name, pob, colorClass, timestamp: Date.now() };
+            let log = [];
+            try { log = JSON.parse(localStorage.getItem('movementsLog') || '[]'); } catch {}
+            log.push(logEntry);
+            localStorage.setItem('movementsLog', JSON.stringify(log));
+            console.log('[FlightBoard] Added to movementsLog:', logEntry);
+            // Remove strip from DOM
+            stripElem.remove();
+            return;
+        }
+        // Default: move strip as before
+        if (
+            dropTarget.classList.contains('lane-booked-out-top') ||
+            dropTarget.classList.contains('lane-booked-out-bottom') ||
+            dropTarget.classList.contains('lane-half') ||
+            dropTarget.classList.contains('lane-circuit-top') ||
+            dropTarget.classList.contains('lane-circuit-bottom')
+        ) {
+            let container = dropTarget.querySelector('#flight-strip-container');
+            if (!container) {
+                container = document.createElement('div');
+                container.id = 'flight-strip-container';
+                dropTarget.appendChild(container);
+            }
+            container.appendChild(stripElem);
+        } else {
+            let lane = dropTarget.closest('.lane');
+            let container = lane.querySelector('#flight-strip-container');
+            if (!container) {
+                container = document.createElement('div');
+                container.id = 'flight-strip-container';
+                lane.querySelector('.lane-label')?.after(container);
+            }
+            container.appendChild(stripElem);
+        }
+    });
+});
+
+// Custom submit logic for new strips
+// Accepts an optional status argument
+function createFlightStrip({reg, posn, from, to, height, heading, pob, status, bookingId}) {
+    const BASE = 'EGSX';
+    let category = '';
+    const strip = document.createElement('div');
+    let laneSelector = '';
+    let regOrCallsign = (reg || '').toUpperCase();
+    let route = (from + '-' + to).toUpperCase();
+    // ICAO to name utility (same as in log patch)
+    function icaoToName(icao) {
+        if (!icao) return icao;
+        icao = icao.trim().toUpperCase();
+        if (window.icaoToNameMap && window.icaoToNameMap[icao]) return window.icaoToNameMap[icao];
+        if (window.nameToIcao) {
+            for (const [name, code] of Object.entries(window.nameToIcao)) {
+                if (code === icao) {
+                    if (!window.icaoToNameMap) window.icaoToNameMap = {};
+                    window.icaoToNameMap[icao] = name;
+                    return name;
+                }
+            }
+        }
+        return icao;
+    }
+    let heightUC = (height || '').toUpperCase();
+    let headingUC = (heading || '').toUpperCase();
+    const fromUpper = (from || '').toUpperCase();
+    const toUpper = (to || '').toUpperCase();
+    let routeBoxHTML = '';
+    if (fromUpper === BASE && toUpper === BASE) {
+        category = 'local';
+        laneSelector = '.lane-local';
+        routeBoxHTML = `<div class="route-content" style="font-size:2.2em;font-weight:bold;display:flex;align-items:center;justify-content:center;height:100%;">L</div>`;
+    } else if (fromUpper === BASE || toUpper === BASE) {
+        category = fromUpper === BASE ? 'landaway' : 'arrival';
+        laneSelector = fromUpper === BASE ? '.lane-booked-out-top' : '.lane-booked-in';
+        // Show airfield names if available
+        let fromDisplay = fromUpper === BASE ? 'EGSX' : icaoToName(fromUpper);
+        let toDisplay = toUpper === BASE ? 'EGSX' : icaoToName(toUpper);
+        routeBoxHTML = `<div class="route-content" style="flex-direction:column;justify-content:space-between;height:100%;display:flex;">
+            <div style="font-size:0.8em;font-weight:600;text-align:center;padding-top:2px;">
+                ${heightUC ? 'HT: ' + heightUC : ''} ${headingUC ? 'HDG: ' + headingUC : ''}
+            </div>
+            <div style="font-size:1.1em;text-align:center;margin-top:auto;padding-bottom:2px;">${fromDisplay} - ${toDisplay}</div>
+        </div>`;
+    } else {
+        // If neither from nor to is EGSX, treat as overflight but place in local swim lane
+        category = 'overflight';
+        laneSelector = '.lane-local';
+        let fromDisplay = icaoToName(fromUpper);
+        let toDisplay = icaoToName(toUpper);
+        routeBoxHTML = `<div class=\"route-content\" style=\"flex-direction:column;justify-content:space-between;height:100%;display:flex;\">\n            <div style=\"font-size:0.8em;font-weight:600;text-align:center;padding-top:2px;\">\n                ${height ? 'HT: ' + height : ''} ${heading ? 'HDG: ' + heading : ''}\n            </div>\n            <div style=\"font-size:1.1em;text-align:center;margin-top:auto;padding-bottom:2px;\">${fromDisplay} - ${toDisplay}</div>\n        </div>`;
+    }
+    strip.className = 'flight-strip ' + category;
+    // Only add pulse/approve/deny for remote bookings (not manual), not for overflight (green)
+    let shouldPulse = (!status || status === 'pending') && category !== 'overflight';
+    strip._shouldPulse = shouldPulse;
+    strip.draggable = true;
+    // Set bookingId as data attribute if provided
+    if (bookingId) {
+        strip.dataset.bookingId = bookingId;
+    }
+    strip.innerHTML = [
+        '<div class="strip-main">',
+            '<div class="strip-row strip-times">',
+                '<div class="strip-quarter-box">',
+                    '<div class="quarter top-left"><span>ETD</span></div>',
+                    '<div class="quarter top-right"><span>ETA</span></div>',
+                     '<div class="quarter bottom-left"><input type="text" placeholder="ATD" title="Double-click to set current time" style="width: 48px; font-size: 1.1em; text-align: center;"></div>',
+                     '<div class="quarter bottom-right"><input type="text" placeholder="ATA" title="Double-click to set current time" style="width: 48px; font-size: 1.1em; text-align: center;"></div>',
+                '</div>',
+                '<div class="strip-aircraft-box" style="display: flex; flex-direction: column; align-items: center; justify-content: center;">',
+                    `<div class="aircraft-reg" style="font-size: 1.2em; font-weight: bold; text-align: center; width: 100%;">${regOrCallsign}</div>`,
+                    '<div class="aircraft-type"></div>',
+                '</div>',
+                '<div class="strip-route-box">',
+                    routeBoxHTML,
+                '</div>',
+                '<div class="strip-final-box">',
+                    '<div class="final-row">',
+                        '<div class="final-rwy">RWY</div>',
+                        '<div class="final-tick"><input type="checkbox"><label class="tick-label"></label></div>',
+                    '</div>',
+                    '<div class="final-row">',
+                        '<div class="final-press">Press</div>',
+                        '<div class="final-tick"><input type="checkbox"><label class="tick-label"></label></div>',
+                    '</div>',
+                    '<div class="final-row">',
+                        '<div class="final-pob">POB</div>',
+                        `<div class="final-booking">${(pob || '').toUpperCase()}</div>`,
+                    '</div>',
+                '</div>',
+            '</div>',
+        '</div>',
+        // Hidden expandable section
+        '<div class="strip-extra" style="display:none; padding:6px 2px 2px 2px; background:#f7f7f7; border-top:1px solid #ccc;">',
+            '<div><label>Name:</label> <input type="text" class="strip-notes" style="width:70%"></div>',
+            '<div style="margin-top:6px;display:flex;gap:18px;align-items:center;">',
+                '<label><input type="checkbox" class="strip-fuel"> Fuel</label>',
+                '<label><input type="checkbox" class="strip-lights"> Lights</label>',
+                '<label><input type="checkbox" class="strip-ifr"> IFR</label>',
+            '</div>',
+        '</div>'
+    ].join('');
+
+    // Add double-click handler for ATD/ATA inputs in this strip, and restrict based on strip color
+    const atdInput = strip.querySelector('input[placeholder="ATD"]');
+    const ataInput = strip.querySelector('input[placeholder="ATA"]');
+    function getCurrentTime() {
+        const now = new Date();
+        return now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
+    }
+    // Restrict input based on strip color
+    if (strip.classList.contains('arrival')) {
+        // Yellow: only ATA enabled
+        if (atdInput) {
+            atdInput.disabled = true;
+            atdInput.style.background = '#eee';
+        }
+        if (ataInput) {
+            ataInput.disabled = false;
+            ataInput.style.background = '';
+            ataInput.addEventListener('dblclick', function() {
+                ataInput.value = getCurrentTime();
+            });
+        }
+    } else if (strip.classList.contains('landaway')) {
+        // Blue: only ATD enabled
+        if (ataInput) {
+            ataInput.disabled = true;
+            ataInput.style.background = '#eee';
+        }
+        if (atdInput) {
+            atdInput.disabled = false;
+            atdInput.style.background = '';
+            atdInput.addEventListener('dblclick', function() {
+                atdInput.value = getCurrentTime();
+            });
+        }
+    } else {
+        // All others: both enabled
+        if (atdInput) {
+            atdInput.disabled = false;
+            atdInput.style.background = '';
+            atdInput.addEventListener('dblclick', function() {
+                atdInput.value = getCurrentTime();
+            });
+        }
+        if (ataInput) {
+            ataInput.disabled = false;
+            ataInput.style.background = '';
+            ataInput.addEventListener('dblclick', function() {
+                ataInput.value = getCurrentTime();
+            });
+        }
+    }
+
+    // Only for remote bookings: add approve/deny buttons
+    strip._addApproveDeny = function() {
+        const actionDiv = document.createElement('div');
+        actionDiv.style.display = 'flex';
+        actionDiv.style.justifyContent = 'center';
+        actionDiv.style.gap = '16px';
+        actionDiv.style.margin = '8px 0 0 0';
+        // Approve button
+        const approveBtn = document.createElement('button');
+        approveBtn.textContent = 'Approve';
+        approveBtn.style.background = '#43a047';
+        approveBtn.style.color = '#fff';
+        approveBtn.style.fontWeight = 'bold';
+        approveBtn.style.border = 'none';
+        approveBtn.style.borderRadius = '4px';
+        approveBtn.style.padding = '4px 16px';
+        approveBtn.style.cursor = 'pointer';
+        // Deny button
+        const denyBtn = document.createElement('button');
+        denyBtn.textContent = 'Deny';
+        denyBtn.style.background = '#d32f2f';
+        denyBtn.style.color = '#fff';
+        denyBtn.style.fontWeight = 'bold';
+        denyBtn.style.border = 'none';
+        denyBtn.style.borderRadius = '4px';
+        denyBtn.style.padding = '4px 16px';
+        denyBtn.style.cursor = 'pointer';
+        actionDiv.appendChild(approveBtn);
+        actionDiv.appendChild(denyBtn);
+        strip.appendChild(actionDiv);
+
+        // Approve handler
+        approveBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            // Send PATCH to backend to update status to 'approved'
+            if (strip.dataset.bookingId) {
+                fetch(`/bookings/${strip.dataset.bookingId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ status: 'approved' })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    strip.classList.remove('pending-pulse');
+                    strip.style.boxShadow = '';
+                    actionDiv.remove();
+                    // Optionally update UI to show approved status
+                    strip.classList.add('approved');
+                })
+                .catch(err => {
+                    alert('Failed to approve booking.');
+                });
+            }
+            else {
+                alert('Booking ID not found.');
+            }
+        });
+        // Deny handler
+        denyBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            // Send PATCH to backend to update status to 'denied'
+            if (strip.dataset.bookingId) {
+                fetch(`/bookings/${strip.dataset.bookingId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ status: 'denied' })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    strip.classList.remove('pending-pulse');
+                    strip.style.boxShadow = '';
+                    actionDiv.remove();
+                    // Optionally update UI to show denied status
+                    strip.classList.add('denied');
+                })
+                .catch(err => {
+                    alert('Failed to deny booking.');
+                });
+            }
+            else {
+                alert('Booking ID not found.');
+            }
+        });
+    }
+
+    // Toggle expand/collapse on click
+    strip.addEventListener('click', function(e) {
+        // Only toggle if not clicking on an input, textarea, label, or button
+        if (['INPUT', 'TEXTAREA', 'LABEL', 'BUTTON'].includes(e.target.tagName)) return;
+        const extra = strip.querySelector('.strip-extra');
+        if (extra) {
+            if (extra.style.display === 'none') {
+                extra.style.display = 'block';
+            } else {
+                extra.style.display = 'none';
+            }
+        }
+    });
+    strip.addEventListener('dragstart', function(e) {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', strip.id || 'newstrip');
+        setTimeout(() => strip.classList.add('dragging'), 0);
+    });
+    strip.addEventListener('dragend', function() {
+        strip.classList.remove('dragging');
+    });
+    if (!strip.id) {
+        strip.id = 'flightStrip-' + Math.random().toString(36).substr(2, 9);
+    }
+    // Fallback: if selector doesn't match, use first swim lane
+    let lane = document.querySelector(laneSelector);
+    if (!lane) {
+        lane = document.querySelector('.lane');
+        laneSelector = '.lane';
+    }
+    return {strip, laneSelector};
+}
+
+
+// --- Auto-fill type on reg input ---
+document.getElementById('regInput').addEventListener('blur', autoFillType);
+document.getElementById('regInput').addEventListener('change', autoFillType);
+document.getElementById('regInput').addEventListener('keyup', function(e) {
+    if (e.key === 'Enter') autoFillType();
+});
+
+function autoFillType() {
+    const reg = document.getElementById('regInput').value.trim().toUpperCase();
+    const type = regToType[reg] || '';
+    // Find the preview strip if it exists, else do nothing
+    // Or, if you want to show it in a preview area, you could set a field
+    // For now, just set a hidden field or a global for use on submit
+    window._autoType = type;
+    // Optionally, show type in a preview area or next to reg input
+    let typePreview = document.getElementById('typePreview');
+    if (!typePreview) {
+        typePreview = document.createElement('span');
+        typePreview.id = 'typePreview';
+        typePreview.style.marginLeft = '8px';
+        typePreview.style.fontWeight = 'bold';
+        document.getElementById('regInput').parentNode.appendChild(typePreview);
+    }
+    typePreview.textContent = type ? `Type: ${type}` : '';
+}
+
+document.getElementById('submitBtn').addEventListener('click', function() {
+    console.log('Submit handler fired');
+    const reg = document.getElementById('regInput').value;
+    const posn = document.getElementById('posnInput').value;
+    let from = document.getElementById('fromInput').value;
+    let to = document.getElementById('toInput').value;
+    const height = document.getElementById('heightInput').value;
+    const heading = document.getElementById('headingInput').value;
+    const pob = document.getElementById('pobInput').value;
+    // --- Convert airport name to ICAO if needed ---
+    function isIcaoCode(val) {
+        return val && icaoSet.has(val.trim().toUpperCase());
+    }
+    if (from && !isIcaoCode(from)) {
+        const lookup = nameToIcao[from.trim().toUpperCase()];
+        if (lookup) from = lookup;
+    }
+    if (to && !isIcaoCode(to)) {
+        const lookup = nameToIcao[to.trim().toUpperCase()];
+        if (lookup) to = lookup;
+    }
+    // Use auto-filled type if available
+    let type = window._autoType || '';
+    let {strip, laneSelector} = createFlightStrip({reg, posn, from, to, height, heading, pob});
+    // Set the type field on the strip
+    if (type) {
+        strip.querySelector('.aircraft-type').textContent = type;
+    }
+    if (to && to.trim().toUpperCase() === 'EGSX') {
+        laneSelector = '.lane-local';
+    }
+    strip.setAttribute('data-manual', 'true');
+    strip.classList.remove('pending-pulse');
+    let lane = document.querySelector(laneSelector);
+    if (!lane) {
+        alert('No valid swim lane found for this strip.');
+        return;
+    }
+    let container = lane.querySelector('#flight-strip-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'flight-strip-container';
+        const label = lane.querySelector('.lane-label');
+        if (label && label.nextSibling) {
+            lane.insertBefore(container, label.nextSibling);
+        } else {
+            lane.appendChild(container);
+        }
+    }
+    container.insertBefore(strip, container.firstChild);
+    if (!strip.hasAttribute('data-manual')) {
+        if (strip._shouldPulse) strip.classList.add('pending-pulse');
+        if (strip._shouldPulse) strip._addApproveDeny();
+    }
+    const isTimeOrderedLane = laneSelector === '.lane-booked-out-top' || laneSelector === '.lane-booked-in';
+    if (isTimeOrderedLane) {
+        const manualStrips = Array.from(container.children).filter(child => child.classList && child.classList.contains('flight-strip') && child.getAttribute('data-manual') === 'true');
+        const nonManualStrips = Array.from(container.children).filter(child => child.classList && child.classList.contains('flight-strip') && child.getAttribute('data-manual') !== 'true');
+        function getTimeValue(stripElem) {
+            const atdInput = stripElem.querySelector('input[placeholder="ATD"]');
+            const etdSpan = stripElem.querySelector('.quarter.top-left span');
+            let timeStr = atdInput && atdInput.value ? atdInput.value : (etdSpan ? etdSpan.textContent : '');
+            if (/^\d{1,2}:\d{2}$/.test(timeStr)) {
+                const [h, m] = timeStr.split(':').map(Number);
+                return h * 60 + m;
+            }
+            return 24 * 60;
+        }
+        nonManualStrips.sort((a, b) => getTimeValue(a) - getTimeValue(b));
+        [...container.children].forEach(child => {
+            if (child.classList && child.classList.contains('flight-strip')) container.removeChild(child);
+        });
+        manualStrips.forEach(strip => container.appendChild(strip));
+        nonManualStrips.forEach(strip => container.appendChild(strip));
+    }
+    setupDragAndDropForStrips();
+    console.log('Created strip for lane:', laneSelector, 'with reg:', reg);
+    document.getElementById('regInput').value = '';
+    document.getElementById('posnInput').value = '';
+    document.getElementById('fromInput').value = '';
+    document.getElementById('toInput').value = '';
+    document.getElementById('heightInput').value = '';
+    document.getElementById('headingInput').value = '';
+    document.getElementById('pobInput').value = '';
+    // Clear preview
+    let typePreview = document.getElementById('typePreview');
+    if (typePreview) typePreview.textContent = '';
+    window._autoType = '';
+});
+</script>
+</html>

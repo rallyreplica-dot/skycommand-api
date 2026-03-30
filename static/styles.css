@@ -1,0 +1,78 @@
+html, body, input, button, select, textarea, .movements-log, .movements-log th, .movements-log td, .header, label, .lookup-result, #lookupSidebar, #openSidebarBtn {
+    font-family: 'Consolas', 'Menlo', 'Monaco', Arial, sans-serif !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.04em;
+}
+body {
+    background: #4FC3F7;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+}
+
+.container {
+    max-width: 400px;
+    margin: 60px auto;
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    padding: 32px 24px 24px 24px;
+    text-align: center;
+}
+
+header {
+    margin-bottom: 32px;
+}
+
+.logo {
+    width: 120px;
+    margin-bottom: 12px;
+}
+
+h1 {
+    font-size: 2.5rem;
+    color: #1a365d;
+    margin: 0;
+    letter-spacing: 2px;
+}
+
+.login-section h2 {
+    color: #1a365d;
+    margin-bottom: 16px;
+}
+
+.login-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.login-form label {
+    text-align: left;
+    color: #2d3a4a;
+    font-weight: 500;
+}
+
+.login-form input, .login-form select {
+    padding: 8px 10px;
+    border: 1px solid #b0c4de;
+    border-radius: 6px;
+    font-size: 1rem;
+}
+
+.login-form button {
+    margin-top: 10px;
+    padding: 10px;
+    background: #1a365d;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 1.1rem;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.login-form button:hover {
+    background: #274472;
+}
