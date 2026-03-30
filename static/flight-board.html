@@ -580,6 +580,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 let height = booking.height || '';
                 let heading = booking.heading || '';
                 let pob = booking.pob || booking.passengers || '';
+                if (typeof pob !== 'string') pob = String(pob);
                 let status = booking.status || 'pending';
                 let bookingId = booking.id;
                 let type = booking.type || booking.remarks || '';
