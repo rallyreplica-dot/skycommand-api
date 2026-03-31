@@ -562,7 +562,7 @@
     <script>
 // --- LOAD BOOKINGS FROM API AND CREATE FLIGHT STRIPS ---
 document.addEventListener('DOMContentLoaded', function() {
-    fetch('https://skycommand-api.onrender.com/api/flight-bookings')
+    fetch('/bookings')
         .then(resp => resp.json())
         .then(bookings => {
             // Get today's date in YYYY-MM-DD format
@@ -571,54 +571,43 @@ document.addEventListener('DOMContentLoaded', function() {
             const mm = String(today.getMonth() + 1).padStart(2, '0');
             const dd = String(today.getDate()).padStart(2, '0');
             const todayStr = `${yyyy}-${mm}-${dd}`;
-            bookings.forEach(booking => {
-                // Map backend fields to frontend expected fields
-                let reg = booking.aircraft || booking.aircraftId || booking.reg || '';
+            bookings.filter(booking => booking.date === todayStr).forEach(booking => {
+                // Map booking fields to createFlightStrip params
+                let reg = booking.aircraft || booking.reg || '';
                 let posn = booking.posn || '';
-                let from = booking.from || booking.departure || booking.departureAirport || '';
-                let to = booking.to || booking.arrival || booking.arrivalAirport || '';
+                let from = booking.from || booking.departure || '';
+                let to = booking.to || booking.arrival || '';
                 let height = booking.height || '';
                 let heading = booking.heading || '';
-                let pob = booking.pob || booking.passengers || '';
-                if (typeof pob !== 'string') pob = String(pob);
+                let pob = booking.pob || '';
                 let status = booking.status || 'pending';
                 let bookingId = booking.id;
-                let type = booking.type || booking.remarks || '';
-                // Use plannedDepartureTime for date filtering
-                let plannedDeparture = booking.plannedDepartureTime || '';
-                let date = '';
-                if (plannedDeparture) {
-                    // plannedDepartureTime is ISO string, get YYYY-MM-DD
-                    date = plannedDeparture.split('T')[0];
+                let {strip, laneSelector} = createFlightStrip({reg, posn, from, to, height, heading, pob, status, bookingId});
+                // Set type if available
+                if (booking.type) {
+                    strip.querySelector('.aircraft-type').textContent = booking.type;
                 }
-                if (date === todayStr) {
-                    let {strip, laneSelector} = createFlightStrip({reg, posn, from, to, height, heading, pob, status, bookingId});
-                    // Set type if available
-                    if (type) {
-                        strip.querySelector('.aircraft-type').textContent = type;
+                // Place in correct lane
+                let lane = document.querySelector(laneSelector);
+                if (!lane) {
+                    lane = document.querySelector('.lane');
+                }
+                let container = lane.querySelector('#flight-strip-container');
+                if (!container) {
+                    container = document.createElement('div');
+                    container.id = 'flight-strip-container';
+                    const label = lane.querySelector('.lane-label');
+                    if (label && label.nextSibling) {
+                        lane.insertBefore(container, label.nextSibling);
+                    } else {
+                        lane.appendChild(container);
                     }
-                    // Place in correct lane
-                    let lane = document.querySelector(laneSelector);
-                    if (!lane) {
-                        lane = document.querySelector('.lane');
-                    }
-                    let container = lane.querySelector('#flight-strip-container');
-                    if (!container) {
-                        container = document.createElement('div');
-                        container.id = 'flight-strip-container';
-                        const label = lane.querySelector('.lane-label');
-                        if (label && label.nextSibling) {
-                            lane.insertBefore(container, label.nextSibling);
-                        } else {
-                            lane.appendChild(container);
-                        }
-                    }
-                    container.appendChild(strip);
-                    // Add pulse and approve/deny if pending
-                    if (strip._shouldPulse) {
-                        strip.classList.add('pending-pulse');
-                        strip._addApproveDeny();
-                    }
+                }
+                container.appendChild(strip);
+                // Add pulse and approve/deny if pending
+                if (strip._shouldPulse) {
+                    strip.classList.add('pending-pulse');
+                    strip._addApproveDeny();
                 }
             });
         })
