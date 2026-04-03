@@ -1,3 +1,4 @@
+const axios = require('axios');
 const express = require('express');
 const cors = require('cors');
 
@@ -16,27 +17,58 @@ let bookings = [
   },
 ];
 
-// GET all bookings
 app.get('/api/flight-bookings', (req, res) => {
   res.json(bookings);
 });
 
-// POST a new booking
 app.post('/api/flight-bookings', (req, res) => {
+  const { pilot360BookingId, aircraftId, pilotId, plannedDepartureTime, plannedArrivalTime, status } = req.body;
   const booking = {
     id: Date.now(),
-    aircraftId: req.body.aircraftId || '',
-    pilotId: req.body.pilotId || '',
-    plannedDepartureTime: req.body.plannedDepartureTime || '',
-    plannedArrivalTime: req.body.plannedArrivalTime || '',
-    status: req.body.status || 'submitted',
+    pilot360BookingId: pilot360BookingId || null,
+    aircraftId,
+    pilotId,
+    plannedDepartureTime,
+    plannedArrivalTime,
+    status: status || 'submitted',
   };
-
   bookings.push(booking);
   res.status(201).json(booking);
 });
 
-// Approve a booking
+// ADD THIS NEW ROUTE
+app.post('/api/flight-bookings/:id/status', async (req, res) => {
+  const booking = bookings.find((b) => String(b.id) === String(req.params.id));
+  const { status } = req.body;
+
+  if (!booking) {
+    return res.status(404).json({ error: 'Booking not found' });
+  }
+
+  if (status !== 'approved' && status !== 'denied') {
+    return res.status(400).json({ error: 'Invalid status' });
+  }
+
+  booking.status = status;
+
+  // Forward status update to Pilot360 if pilot360BookingId exists
+  if (booking.pilot360BookingId) {
+    try {
+      await axios.post(
+        `http://localhost:3001/api/flight-bookings/${booking.pilot360BookingId}/status`,
+        { status }
+      );
+    } catch (err) {
+      console.error('Error syncing status to Pilot360:', err.message);
+    }
+  }
+
+  res.json({
+    message: 'Booking status updated',
+    booking,
+  });
+});
+
 app.post('/api/flight-bookings/:id/approve', (req, res) => {
   const booking = bookings.find((b) => String(b.id) === String(req.params.id));
 
@@ -48,7 +80,6 @@ app.post('/api/flight-bookings/:id/approve', (req, res) => {
   res.json(booking);
 });
 
-// Deny a booking
 app.post('/api/flight-bookings/:id/reject', (req, res) => {
   const booking = bookings.find((b) => String(b.id) === String(req.params.id));
 
@@ -60,8 +91,8 @@ app.post('/api/flight-bookings/:id/reject', (req, res) => {
   res.json(booking);
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`Pilot360 backend running on port ${PORT}`);
 });
