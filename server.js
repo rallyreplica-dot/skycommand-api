@@ -6,25 +6,25 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-let bookings = [
-  {
-    id: 1,
-    aircraftId: 'GGZDO',
-    pilotId: 'P001',
-    plannedDepartureTime: '2026-04-03T12:00:00Z',
-    plannedArrivalTime: '2026-04-03T13:00:00Z',
-    status: 'submitted',
-  },
-];
+let bookings = [];
+let nextId = 1;
 
 app.get('/api/flight-bookings', (req, res) => {
   res.json(bookings);
 });
 
 app.post('/api/flight-bookings', (req, res) => {
-  const { pilot360BookingId, aircraftId, pilotId, plannedDepartureTime, plannedArrivalTime, status } = req.body;
+  const {
+    pilot360BookingId,
+    aircraftId,
+    pilotId,
+    plannedDepartureTime,
+    plannedArrivalTime,
+    status,
+  } = req.body;
+
   const booking = {
-    id: Date.now(),
+    id: nextId++,
     pilot360BookingId: pilot360BookingId || null,
     aircraftId,
     pilotId,
@@ -32,11 +32,11 @@ app.post('/api/flight-bookings', (req, res) => {
     plannedArrivalTime,
     status: status || 'submitted',
   };
+
   bookings.push(booking);
   res.status(201).json(booking);
 });
 
-// ADD THIS NEW ROUTE
 app.post('/api/flight-bookings/:id/status', async (req, res) => {
   const booking = bookings.find((b) => String(b.id) === String(req.params.id));
   const { status } = req.body;
@@ -51,7 +51,6 @@ app.post('/api/flight-bookings/:id/status', async (req, res) => {
 
   booking.status = status;
 
-  // Forward status update to Pilot360 if pilot360BookingId exists
   if (booking.pilot360BookingId) {
     try {
       await axios.post(
