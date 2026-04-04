@@ -7,26 +7,9 @@
     <!-- Google Fonts: Inter -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
-        /* Pulse animation for pending bookings - more obvious */
-        @keyframes pendingPulse {
-            0% {
-                box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.95), 0 0 32px 8px rgba(255, 193, 7, 0.5);
-                border-color: #ffc107;
-            }
-            50% {
-                box-shadow: 0 0 32px 24px rgba(255, 193, 7, 0.85), 0 0 64px 32px rgba(255, 193, 7, 0.35);
-                border-color: #ffc107;
-            }
-            100% {
-                box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.95), 0 0 32px 8px rgba(255, 193, 7, 0.5);
-                border-color: #ffc107;
-            }
-        }
+        /* No animation for pending bookings */
         .pending-pulse {
-            animation: pendingPulse 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-            border-color: #ffc107 !important;
-            box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.95), 0 0 32px 8px rgba(255, 193, 7, 0.5);
-            z-index: 2;
+            /* Animation removed */
         }
         /* Make all text uppercase */
         html, body, .flightboard-header, .flightboard-header h1, .flightboard-header .header-logo, .flightboard-inputs, .flightboard-inputs label, .flightboard-inputs input, .flightboard-inputs button, .lane-label, .lane-label-out, .lane, .flight-strip, .strip-row, .strip-aircraft-box, .strip-route-box, .strip-final-box, .route-content, .aircraft-reg, .aircraft-type, .aircraft-callsign, .aircraft-icao-speech, .final-row, .final-booking, .final-pob, .quarter, .strip-extra, .modern-btn {
@@ -425,6 +408,7 @@
 
 </head>
 <body>
+    <div style="background: #d32f2f; color: #fff; font-size: 1.2em; font-weight: bold; padding: 8px; text-align: center; z-index: 9999;">DEBUG: clone/skycommand-api/static/flight-board.html is being served</div>
 
     <div class="flightboard-header">
         <span class="header-logo"></span>
@@ -562,16 +546,18 @@
     <script>
 // --- LOAD BOOKINGS FROM API AND CREATE FLIGHT STRIPS ---
 document.addEventListener('DOMContentLoaded', function() {
-    fetch('/bookings')
+    fetch('http://172.25.0.138:3000/api/flight-bookings')
         .then(resp => resp.json())
         .then(bookings => {
-            // Get today's date in YYYY-MM-DD format
+            console.log('[DEBUG] Bookings loaded from API:', bookings);
+            // Get today's date in DDMMYY format to match backend
             const today = new Date();
-            const yyyy = today.getFullYear();
-            const mm = String(today.getMonth() + 1).padStart(2, '0');
             const dd = String(today.getDate()).padStart(2, '0');
-            const todayStr = `${yyyy}-${mm}-${dd}`;
+            const mm = String(today.getMonth() + 1).padStart(2, '0');
+            const yy = String(today.getFullYear()).slice(-2);
+            const todayStr = `${dd}${mm}${yy}`;
             bookings.filter(booking => booking.date === todayStr).forEach(booking => {
+                console.log('[DEBUG] Creating strip for booking:', booking);
                 // Map booking fields to createFlightStrip params
                 let reg = booking.aircraft || booking.reg || '';
                 let posn = booking.posn || '';
@@ -617,7 +603,7 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 // --- AIRCRAFT TYPE LOOKUP ---
 let regToType = {};
-fetch('assets/aircraft%20database/270326_with_weight.txt')
+fetch('/static/assets/aircraft database/270326_with_weight.txt')
     .then(resp => resp.text())
     .then(txt => {
         txt.split(/\r?\n/).forEach(line => {
@@ -651,7 +637,7 @@ function parseCSV(csv, delimiter = ',') {
         return obj;
     }).filter(Boolean);
 }
-fetch('assets/airports.csv')
+fetch('/static/assets/airports.csv')
     .then(resp => resp.text())
     .then(csv => {
         const airports = parseCSV(csv);
@@ -917,12 +903,22 @@ function createFlightStrip({reg, posn, from, to, height, heading, pob, status, b
         laneSelector = '.lane-local';
         let fromDisplay = icaoToName(fromUpper);
         let toDisplay = icaoToName(toUpper);
-        routeBoxHTML = `<div class=\"route-content\" style=\"flex-direction:column;justify-content:space-between;height:100%;display:flex;\">\n            <div style=\"font-size:0.8em;font-weight:600;text-align:center;padding-top:2px;\">\n                ${height ? 'HT: ' + height : ''} ${heading ? 'HDG: ' + heading : ''}\n            </div>\n            <div style=\"font-size:1.1em;text-align:center;margin-top:auto;padding-bottom:2px;\">${fromDisplay} - ${toDisplay}</div>\n        </div>`;
+        routeBoxHTML = `<div class="route-content" style="flex-direction:column;justify-content:space-between;height:100%;display:flex;">
+            <div style="font-size:0.8em;font-weight:600;text-align:center;padding-top:2px;">
+                ${height ? 'HT: ' + height : ''} ${heading ? 'HDG: ' + heading : ''}
+            </div>
+            <div style="font-size:1.1em;text-align:center;margin-top:auto;padding-bottom:2px;">${fromDisplay} - ${toDisplay}</div>
+        </div>`;
     }
     strip.className = 'flight-strip ' + category;
-    // Only add pulse/approve/deny for remote bookings (not manual), not for overflight (green)
+    // Only remote bookings (not manual) should throb if pending
     let shouldPulse = (!status || status === 'pending') && category !== 'overflight';
     strip._shouldPulse = shouldPulse;
+    if (!strip.hasAttribute('data-manual') && shouldPulse) {
+        strip.classList.add('pending-pulse');
+        strip.style.border = '4px solid red'; // DEBUG: force visible border
+        console.log('[DEBUG] Added pending-pulse to remote booking', reg, status);
+    }
     strip.draggable = true;
     // Set bookingId as data attribute if provided
     if (bookingId) {
@@ -955,7 +951,7 @@ function createFlightStrip({reg, posn, from, to, height, heading, pob, status, b
                     '</div>',
                     '<div class="final-row">',
                         '<div class="final-pob">POB</div>',
-                        `<div class="final-booking">${(pob || '').toUpperCase()}</div>`,
+                        `<div class="final-booking">${(pob !== undefined && pob !== null ? String(pob) : '').toUpperCase()}</div>`,
                     '</div>',
                 '</div>',
             '</div>',
@@ -1057,6 +1053,7 @@ function createFlightStrip({reg, posn, from, to, height, heading, pob, status, b
         // Approve handler
         approveBtn.addEventListener('click', function(e) {
             e.stopPropagation();
+            strip.classList.remove('pending-pulse');
             // Send PATCH to backend to update status to 'approved'
             if (strip.dataset.bookingId) {
                 fetch(`/bookings/${strip.dataset.bookingId}`, {
@@ -1068,23 +1065,21 @@ function createFlightStrip({reg, posn, from, to, height, heading, pob, status, b
                 })
                 .then(response => response.json())
                 .then(data => {
-                    strip.classList.remove('pending-pulse');
-                    strip.style.boxShadow = '';
                     actionDiv.remove();
-                    // Optionally update UI to show approved status
                     strip.classList.add('approved');
                 })
                 .catch(err => {
                     alert('Failed to approve booking.');
                 });
-            }
-            else {
-                alert('Booking ID not found.');
+            } else {
+                actionDiv.remove();
+                strip.classList.add('approved');
             }
         });
         // Deny handler
         denyBtn.addEventListener('click', function(e) {
             e.stopPropagation();
+            strip.classList.remove('pending-pulse');
             // Send PATCH to backend to update status to 'denied'
             if (strip.dataset.bookingId) {
                 fetch(`/bookings/${strip.dataset.bookingId}`, {
@@ -1096,18 +1091,15 @@ function createFlightStrip({reg, posn, from, to, height, heading, pob, status, b
                 })
                 .then(response => response.json())
                 .then(data => {
-                    strip.classList.remove('pending-pulse');
-                    strip.style.boxShadow = '';
-                    actionDiv.remove();
-                    // Optionally update UI to show denied status
-                    strip.classList.add('denied');
+                    strip.remove();
+                    alert('Booking denied and removed.');
                 })
                 .catch(err => {
                     alert('Failed to deny booking.');
                 });
-            }
-            else {
-                alert('Booking ID not found.');
+            } else {
+                strip.remove();
+                alert('Booking denied and removed.');
             }
         });
     }
@@ -1195,67 +1187,30 @@ document.getElementById('submitBtn').addEventListener('click', function() {
     }
     // Use auto-filled type if available
     let type = window._autoType || '';
-    let {strip, laneSelector} = createFlightStrip({reg, posn, from, to, height, heading, pob});
+    let status = 'pending';
+    let {strip, laneSelector} = createFlightStrip({reg, posn, from, to, height, heading, pob, status, bookingId: null});
     // Set the type field on the strip
     if (type) {
         strip.querySelector('.aircraft-type').textContent = type;
     }
-    if (to && to.trim().toUpperCase() === 'EGSX') {
-        laneSelector = '.lane-local';
-    }
-    strip.setAttribute('data-manual', 'true');
-    strip.classList.remove('pending-pulse');
-    let lane = document.querySelector(laneSelector);
-    if (!lane) {
-        alert('No valid swim lane found for this strip.');
-        return;
-    }
-    let container = lane.querySelector('#flight-strip-container');
-    if (!container) {
-        container = document.createElement('div');
-        container.id = 'flight-strip-container';
-        const label = lane.querySelector('.lane-label');
-        if (label && label.nextSibling) {
-            lane.insertBefore(container, label.nextSibling);
-        } else {
-            lane.appendChild(container);
-        }
-    }
-    container.insertBefore(strip, container.firstChild);
-    if (!strip.hasAttribute('data-manual')) {
-        if (strip._shouldPulse) strip.classList.add('pending-pulse');
-        if (strip._shouldPulse) strip._addApproveDeny();
-    }
-    const isTimeOrderedLane = laneSelector === '.lane-booked-out-top' || laneSelector === '.lane-booked-in';
-    if (isTimeOrderedLane) {
-        const manualStrips = Array.from(container.children).filter(child => child.classList && child.classList.contains('flight-strip') && child.getAttribute('data-manual') === 'true');
-        const nonManualStrips = Array.from(container.children).filter(child => child.classList && child.classList.contains('flight-strip') && child.getAttribute('data-manual') !== 'true');
-        function getTimeValue(stripElem) {
-            const atdInput = stripElem.querySelector('input[placeholder="ATD"]');
-            const etdSpan = stripElem.querySelector('.quarter.top-left span');
-            let timeStr = atdInput && atdInput.value ? atdInput.value : (etdSpan ? etdSpan.textContent : '');
-            if (/^\d{1,2}:\d{2}$/.test(timeStr)) {
-                const [h, m] = timeStr.split(':').map(Number);
-                return h * 60 + m;
-            }
-            return 24 * 60;
-        }
-        nonManualStrips.sort((a, b) => getTimeValue(a) - getTimeValue(b));
-        [...container.children].forEach(child => {
-            if (child.classList && child.classList.contains('flight-strip')) container.removeChild(child);
-        });
-        manualStrips.forEach(strip => container.appendChild(strip));
-        nonManualStrips.forEach(strip => container.appendChild(strip));
-    }
-    setupDragAndDropForStrips();
-    console.log('Created strip for lane:', laneSelector, 'with reg:', reg);
-    document.getElementById('regInput').value = '';
-    document.getElementById('posnInput').value = '';
-    document.getElementById('fromInput').value = '';
-    document.getElementById('toInput').value = '';
-    document.getElementById('heightInput').value = '';
-    document.getElementById('headingInput').value = '';
-    document.getElementById('pobInput').value = '';
+    // Post to backend
+    const booking = { aircraft: reg, from, to, pob, status, date: (() => {
+        const d = new Date();
+        const dd = String(d.getDate()).padStart(2, '0');
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const yy = String(d.getFullYear()).slice(-2);
+        return `${dd}${mm}${yy}`;
+    })() };
+    fetch('http://172.25.0.138:3000/api/flight-bookings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(booking)
+    })
+    .then(resp => resp.json())
+    .then(data => {
+        // Optionally reload page or add strip
+        window.location.reload();
+    });
     // Clear preview
     let typePreview = document.getElementById('typePreview');
     if (typePreview) typePreview.textContent = '';
