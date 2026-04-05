@@ -546,10 +546,11 @@
     <script>
 // --- LOAD BOOKINGS FROM API AND CREATE FLIGHT STRIPS ---
 document.addEventListener('DOMContentLoaded', function() {
-    fetch('http://172.25.0.138:3000/api/flight-bookings')
+    fetch('http://127.0.0.1:41000/api/flight-bookings')
         .then(resp => resp.json())
         .then(bookings => {
             console.log('[DEBUG] Bookings loaded from API:', bookings);
+            console.log('[DEBUG] Number of bookings:', bookings.length);
             // Get today's date in DDMMYY format to match backend
             const today = new Date();
             const dd = String(today.getDate()).padStart(2, '0');
@@ -557,7 +558,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const yy = String(today.getFullYear()).slice(-2);
             const todayStr = `${dd}${mm}${yy}`;
             bookings.filter(booking => booking.date === todayStr).forEach(booking => {
-                console.log('[DEBUG] Creating strip for booking:', booking);
+                console.log('[DEBUG] Rendering booking:', booking);
                 // Map booking fields to createFlightStrip params
                 let reg = booking.aircraft || booking.reg || '';
                 let posn = booking.posn || '';
@@ -603,7 +604,8 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 // --- AIRCRAFT TYPE LOOKUP ---
 let regToType = {};
-fetch('/static/assets/aircraft database/270326_with_weight.txt')
+console.log('[DEBUG] Asset path:', '/skycommand-api/static/assets/aircraft database/270326_with_weight.txt');
+fetch('/skycommand-api/static/assets/aircraft database/270326_with_weight.txt')
     .then(resp => resp.text())
     .then(txt => {
         txt.split(/\r?\n/).forEach(line => {
@@ -637,7 +639,8 @@ function parseCSV(csv, delimiter = ',') {
         return obj;
     }).filter(Boolean);
 }
-fetch('/static/assets/airports.csv')
+console.log('[DEBUG] Asset path:', '/skycommand-api/static/assets/airports.csv');
+fetch('/skycommand-api/static/assets/airports.csv')
     .then(resp => resp.text())
     .then(csv => {
         const airports = parseCSV(csv);
@@ -1201,7 +1204,7 @@ document.getElementById('submitBtn').addEventListener('click', function() {
         const yy = String(d.getFullYear()).slice(-2);
         return `${dd}${mm}${yy}`;
     })() };
-    fetch('http://172.25.0.138:3000/api/flight-bookings', {
+    fetch('http://127.0.0.1:41000/api/flight-bookings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(booking)
