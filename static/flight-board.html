@@ -7,6 +7,22 @@
     <!-- Google Fonts: Inter -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
+                /* Pulse animation for pending bookings */
+                @keyframes pendingThrob {
+                    0% {
+                        transform: scale(1);
+                    }
+                    50% {
+                        transform: scale(1.06);
+                    }
+                    100% {
+                        transform: scale(1);
+                    }
+                }
+                .pending-pulse {
+                    animation: pendingThrob 2s ease-in-out infinite;
+                    border-color: #1976d2 !important;
+                }
         /* Make all text uppercase */
         html, body, .flightboard-header, .flightboard-header h1, .flightboard-header .header-logo, .flightboard-inputs, .flightboard-inputs label, .flightboard-inputs input, .flightboard-inputs button, .lane-label, .lane-label-out, .lane, .flight-strip, .strip-row, .strip-aircraft-box, .strip-route-box, .strip-final-box, .route-content, .aircraft-reg, .aircraft-type, .aircraft-callsign, .aircraft-icao-speech, .final-row, .final-booking, .final-pob, .quarter, .strip-extra, .modern-btn {
             text-transform: uppercase !important;
@@ -27,10 +43,12 @@
                             width: 100%;
                             height: 100%;
                             margin-top: 6px;
+                            overflow: visible !important;
                         }
                         .lane-booked-out-top, .lane-booked-out-bottom,
                         .lane-half, .lane-circuit-top, .lane-circuit-bottom {
                             position: relative;
+                            overflow: visible !important;
                         }
                         .lane-booked-out-top #flight-strip-container,
                         .lane-booked-out-bottom #flight-strip-container,
@@ -45,6 +63,7 @@
                         }
                         .flight-strip {
                             flex-shrink: 0 !important;
+                            position: relative;
                         }
                 /* Flight strip styles restored */
                 .flight-strip {
@@ -565,45 +584,90 @@ function loadBookingsFromAPI() {
             const mm = String(today.getMonth() + 1).padStart(2, '0');
             const yy = String(today.getFullYear()).slice(-2);
             const todayStr = `${dd}${mm}${yy}`;
-            bookings.filter(booking => booking.date === todayStr).forEach(booking => {
-                console.log('[DEBUG] Rendering booking:', booking);
-                // Map booking fields to createFlightStrip params
-                let reg = booking.aircraft || booking.reg || '';
-                let posn = booking.posn || '';
-                let from = booking.from || booking.departure || '';
-                let to = booking.to || booking.arrival || '';
-                let height = booking.height || '';
-                let heading = booking.heading || '';
-                let pob = booking.pob || '';
-                let etd = booking.etd || '';
-                let eta = booking.eta || '';
-                let callsign = booking.callsign || '';
-                let flightType = booking.type || '';
-                let status = booking.status || 'pending';
-                let bookingId = booking.id;
-                let {strip, laneSelector} = createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta, callsign, flightType, status, bookingId});
-                // Set aircraft type from registration lookup, not booking.type (which is flight type e.g. "circuit")
-                // Place in correct lane
-                let lane = document.querySelector(laneSelector);
-                if (!lane) {
-                    lane = document.querySelector('.lane');
-                }
-                let container = lane.querySelector('#flight-strip-container');
-                if (!container) {
-                    container = document.createElement('div');
-                    container.id = 'flight-strip-container';
-                    const label = lane.querySelector('.lane-label');
-                    if (label && label.nextSibling) {
-                        lane.insertBefore(container, label.nextSibling);
-                    } else {
-                        lane.appendChild(container);
+            // Show bookings for today (outbound) and bookings with returnDate === todayStr (return legs)
+            bookings.forEach(booking => {
+                // Skip denied or cancelled bookings
+                if (booking.status === 'denied' || booking.status === 'cancelled') return;
+                let shown = false;
+                // Outbound leg for today
+                if (booking.date === todayStr) {
+                    shown = true;
+                    console.log('[DEBUG] Rendering outbound booking:', booking);
+                    let reg = booking.aircraft || booking.reg || '';
+                    let posn = booking.posn || '';
+                    let from = booking.from || booking.departure || '';
+                    let to = booking.to || booking.arrival || '';
+                    let height = booking.height || '';
+                    let heading = booking.heading || '';
+                    let pob = booking.pob || '';
+                    let etd = booking.etd || '';
+                    let eta = booking.eta || '';
+                    let callsign = booking.callsign || '';
+                    let flightType = booking.type || '';
+                    let status = booking.status || 'pending';
+                    let bookingId = booking.id;
+                    let {strip, laneSelector} = createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta, callsign, flightType, status, bookingId});
+                    let lane = document.querySelector(laneSelector);
+                    if (!lane) lane = document.querySelector('.lane');
+                    let container = lane.querySelector('#flight-strip-container');
+                    if (!container) {
+                        container = document.createElement('div');
+                        container.id = 'flight-strip-container';
+                        const label = lane.querySelector('.lane-label');
+                        if (label && label.nextSibling) {
+                            lane.insertBefore(container, label.nextSibling);
+                        } else {
+                            lane.appendChild(container);
+                        }
+                    }
+                    container.appendChild(strip);
+                    if (strip._shouldPulse) {
+                        strip.classList.add('pending-pulse');
+                        strip._addApproveDeny();
                     }
                 }
-                container.appendChild(strip);
-                // Add pulse and approve/deny if pending
-                if (strip._shouldPulse) {
-                    strip.classList.add('pending-pulse');
-                    strip._addApproveDeny();
+                // Return leg for today (if present and not already shown)
+                if (booking.returnDate === todayStr) {
+                    // Avoid double-showing if outbound and return are same day
+                    if (!(shown && booking.date === booking.returnDate)) {
+                        console.log('[DEBUG] Rendering return leg for booking:', booking);
+                        let reg = booking.aircraft || booking.reg || '';
+                        let posn = booking.posn || '';
+                        // For return, swap from/to
+                        let from = booking.to || booking.arrival || '';
+                        let to = booking.from || booking.departure || '';
+                        let height = booking.height || '';
+                        let heading = booking.heading || '';
+                        let pob = booking.pob || '';
+                        // Use returnETD/returnETA if present, else blank
+                        let etd = booking.returnETD || '';
+                        let eta = booking.returnETA || '';
+                        let callsign = booking.callsign || '';
+                        let flightType = booking.type || '';
+                        let status = booking.status || 'pending';
+                        let bookingId = booking.id ? booking.id + '-return' : null;
+                        let {strip, laneSelector} = createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta, callsign, flightType, status, bookingId});
+                        // For return, use arrival lane
+                        laneSelector = '.lane-booked-in';
+                        let lane = document.querySelector(laneSelector);
+                        if (!lane) lane = document.querySelector('.lane');
+                        let container = lane.querySelector('#flight-strip-container');
+                        if (!container) {
+                            container = document.createElement('div');
+                            container.id = 'flight-strip-container';
+                            const label = lane.querySelector('.lane-label');
+                            if (label && label.nextSibling) {
+                                lane.insertBefore(container, label.nextSibling);
+                            } else {
+                                lane.appendChild(container);
+                            }
+                        }
+                        container.appendChild(strip);
+                        if (strip._shouldPulse) {
+                            strip.classList.add('pending-pulse');
+                            strip._addApproveDeny();
+                        }
+                    }
                 }
             });
             // Sort booked-out lane: earliest ETD at bottom (latest at top)
@@ -650,6 +714,42 @@ function loadBookingsFromAPI() {
 }
 document.addEventListener('DOMContentLoaded', function() {
     loadBookingsFromAPI();
+    // --- WEBSOCKET REAL-TIME UPDATES ---
+    let ws;
+    function connectWebSocket() {
+        ws = new WebSocket('ws://127.0.0.1:41000');
+        ws.onopen = function() {
+            console.log('[WebSocket] Connected to server');
+        };
+        ws.onmessage = function(event) {
+            console.log('[WebSocket] Message received:', event.data);
+            if (event.data === 'update') {
+                // Remove only non-manual (non-green) strips
+                document.querySelectorAll('.flight-strip').forEach(e => {
+                    if (!e.hasAttribute('data-manual')) e.remove();
+                });
+                loadBookingsFromAPI();
+                if (window && typeof window.restoreManualStripTimes === 'function') {
+                    setTimeout(window.restoreManualStripTimes, 100);
+                }
+            }
+        };
+        ws.onclose = function() {
+            console.log('[WebSocket] Disconnected. Reconnecting in 2s...');
+            setTimeout(connectWebSocket, 2000);
+        };
+        ws.onerror = function(err) {
+            console.error('[WebSocket] Error:', err);
+            ws.close();
+        };
+    }
+    connectWebSocket();
+    // Patch loadBookingsFromAPI to not restore times here
+    const origLoadBookings = loadBookingsFromAPI;
+    window.loadBookingsFromAPI = function() {
+        origLoadBookings.apply(this, arguments);
+        // No restore here; handled by manual-strip-times.js
+    };
 });
 // --- ICAO CODE → TELEPHONY MAP ---
 const icaoToTelephony = {
@@ -959,6 +1059,9 @@ function createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta,
     // Only remote bookings (not manual) should throb if pending
     let shouldPulse = (!status || status === 'pending') && category !== 'overflight';
     strip._shouldPulse = shouldPulse;
+    console.log('[PULSE DEBUG]', {
+        reg, callsign, status, category, hasDataManual: strip.hasAttribute('data-manual'), shouldPulse, bookingId
+    });
     if (!strip.hasAttribute('data-manual') && shouldPulse) {
         strip.classList.add('pending-pulse');
     }
@@ -966,6 +1069,16 @@ function createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta,
     // Set bookingId as data attribute if provided
     if (bookingId) {
         strip.dataset.bookingId = bookingId;
+    }
+    // Only assign data-manual and data-manual-id for true manual strips (overflight/green, no bookingId)
+    if (!bookingId && category === 'overflight') {
+        strip.setAttribute('data-manual', '1');
+        // Assign a unique manual id if not present
+        if (!strip.dataset.manualId) {
+            let baseId = (reg + '-' + (from || '') + '-' + (to || '') + '-' + category).replace(/\W+/g, '').toLowerCase();
+            if (!baseId || baseId.length < 4) baseId = 'mstrip-' + Math.random().toString(36).substr(2, 9);
+            strip.dataset.manualId = baseId;
+        }
     }
     // Landaway dep: blank ETA (show X), Arrival/return: blank ETD (show X)
     let displayEtd = etd || 'ETD';
@@ -980,6 +1093,38 @@ function createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta,
             `<div class="quarter top-right"><span>${displayEta}</span></div>`,
             '<div class="quarter bottom-left" style="background:#ffe066; display:flex; align-items:center; justify-content:center;">X</div>',
             '<div class="quarter bottom-right" style="background:#fff;"><input type="text" placeholder="ATA" title="Double-click to set current time" style="width: 48px; font-size: 1.1em; text-align: center; background:#fff;"></div>'
+        ].join('');
+    } else if (category === 'circuit') {
+        // Circuit: bottom left white ATD input, bottom right white ATA input
+        quarterBoxHTML = [
+            `<div class="quarter top-left"><span>${displayEtd}</span></div>`,
+            `<div class="quarter top-right"><span>${displayEta}</span></div>`,
+            '<div class="quarter bottom-left" style="background:#fff;"><input type="text" placeholder="ATD" title="Double-click to set current time" style="width: 48px; font-size: 1.1em; text-align: center; background:#fff;"></div>',
+            '<div class="quarter bottom-right" style="background:#fff;"><input type="text" placeholder="ATA" title="Double-click to set current time" style="width: 48px; font-size: 1.1em; text-align: center; background:#fff;"></div>'
+        ].join('');
+    } else if (category === 'landaway') {
+        // Landaway: bottom left white ATD input, bottom right blue X
+        quarterBoxHTML = [
+            `<div class="quarter top-left"><span>${displayEtd}</span></div>`,
+            `<div class="quarter top-right"><span>${displayEta}</span></div>`,
+            '<div class="quarter bottom-left" style="background:#fff;"><input type="text" placeholder="ATD" title="Double-click to set current time" style="width: 48px; font-size: 1.1em; text-align: center; background:#fff;"></div>',
+            '<div class="quarter bottom-right" style="background:#90c3fa; display:flex; align-items:center; justify-content:center;">X</div>'
+        ].join('');
+    } else if (category === 'local') {
+        // Local: bottom left white ATD input, bottom right white ATA input
+        quarterBoxHTML = [
+            `<div class="quarter top-left"><span>${displayEtd}</span></div>`,
+            `<div class="quarter top-right"><span>${displayEta}</span></div>`,
+            '<div class="quarter bottom-left" style="background:#fff;"><input type="text" placeholder="ATD" title="Double-click to set current time" style="width: 48px; font-size: 1.1em; text-align: center; background:#fff;"></div>',
+            '<div class="quarter bottom-right" style="background:#fff;"><input type="text" placeholder="ATA" title="Double-click to set current time" style="width: 48px; font-size: 1.1em; text-align: center; background:#fff;"></div>'
+        ].join('');
+    } else if (category === 'overflight') {
+        // Green transit strip: top left 'on', top right 'off', bottom left/right blank time inputs
+        quarterBoxHTML = [
+            `<div class="quarter top-left" style="background:#fff;">ON</div>`,
+            `<div class="quarter top-right" style="background:#fff;">OFF</div>`,
+            '<div class="quarter bottom-left" style="background:#fff;"><input type="text" title="Double-click to set current time" style="width: 48px; font-size: 1.1em; text-align: center; background:#fff;"></div>',
+            '<div class="quarter bottom-right" style="background:#fff;"><input type="text" title="Double-click to set current time" style="width: 48px; font-size: 1.1em; text-align: center; background:#fff;"></div>'
         ].join('');
     } else {
         // All others: bottom left white ATD input, bottom right white X
@@ -1026,12 +1171,13 @@ function createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta,
     ].join('');
 
     // Add double-click handler for ATD/ATA inputs in this strip, and restrict based on strip color
-    const atdInput = strip.querySelector('input[placeholder="ATD"]');
-    const ataInput = strip.querySelector('input[placeholder="ATA"]');
+    const atdInput = strip.querySelector('input[placeholder="ATD"]') || strip.querySelector('.quarter.bottom-left input');
+    const ataInput = strip.querySelector('input[placeholder="ATA"]') || strip.querySelector('.quarter.bottom-right input');
     function getCurrentTime() {
         const now = new Date();
-        return now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
+        return now.getHours().toString().padStart(2, '0') + now.getMinutes().toString().padStart(2, '0');
     }
+        // ...existing code...
     // Restrict input based on strip color
     if (strip.classList.contains('arrival')) {
         // Yellow: only ATA enabled
@@ -1044,6 +1190,7 @@ function createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta,
             ataInput.style.background = '';
             ataInput.addEventListener('dblclick', function() {
                 ataInput.value = getCurrentTime();
+                ataInput.dispatchEvent(new Event('input', {bubbles:true}));
             });
         }
     } else if (strip.classList.contains('landaway')) {
@@ -1057,6 +1204,25 @@ function createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta,
             atdInput.style.background = '';
             atdInput.addEventListener('dblclick', function() {
                 atdInput.value = getCurrentTime();
+                atdInput.dispatchEvent(new Event('input', {bubbles:true}));
+            });
+        }
+    } else if (strip.classList.contains('overflight')) {
+        // Green: both enabled, double-click sets time
+        if (atdInput) {
+            atdInput.disabled = false;
+            atdInput.style.background = '';
+            atdInput.addEventListener('dblclick', function() {
+                atdInput.value = getCurrentTime();
+                atdInput.dispatchEvent(new Event('input', {bubbles:true}));
+            });
+        }
+        if (ataInput) {
+            ataInput.disabled = false;
+            ataInput.style.background = '';
+            ataInput.addEventListener('dblclick', function() {
+                ataInput.value = getCurrentTime();
+                ataInput.dispatchEvent(new Event('input', {bubbles:true}));
             });
         }
     } else {
@@ -1066,6 +1232,7 @@ function createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta,
             atdInput.style.background = '';
             atdInput.addEventListener('dblclick', function() {
                 atdInput.value = getCurrentTime();
+                atdInput.dispatchEvent(new Event('input', {bubbles:true}));
             });
         }
         if (ataInput) {
@@ -1073,6 +1240,7 @@ function createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta,
             ataInput.style.background = '';
             ataInput.addEventListener('dblclick', function() {
                 ataInput.value = getCurrentTime();
+                ataInput.dispatchEvent(new Event('input', {bubbles:true}));
             });
         }
     }
@@ -1205,7 +1373,7 @@ document.getElementById('regInput').addEventListener('keyup', function(e) {
 
 function autoFillType() {
     const reg = document.getElementById('regInput').value.trim().toUpperCase();
-    const type = regToType[reg] || '';
+    const type = (typeof regToType !== 'undefined' && regToType && regToType[reg]) ? regToType[reg] : '';
     // Find the preview strip if it exists, else do nothing
     // Or, if you want to show it in a preview area, you could set a field
     // For now, just set a hidden field or a global for use on submit
@@ -1231,48 +1399,75 @@ document.getElementById('submitBtn').addEventListener('click', function() {
     const height = document.getElementById('heightInput').value;
     const heading = document.getElementById('headingInput').value;
     const pob = document.getElementById('pobInput').value;
-    // --- Convert airport name to ICAO if needed ---
-    function isIcaoCode(val) {
-        return val && icaoSet.has(val.trim().toUpperCase());
-    }
-    if (from && !isIcaoCode(from)) {
-        const lookup = nameToIcao[from.trim().toUpperCase()];
-        if (lookup) from = lookup;
-    }
-    if (to && !isIcaoCode(to)) {
-        const lookup = nameToIcao[to.trim().toUpperCase()];
-        if (lookup) to = lookup;
-    }
-    // Use auto-filled type if available
     let type = window._autoType || '';
     let status = 'pending';
-    let {strip, laneSelector} = createFlightStrip({reg, posn, from, to, height, heading, pob, status, bookingId: null});
+    // Determine laneSelector based on category
+    let tempStrip = createFlightStrip({reg, posn, from, to, height, heading, pob, status, bookingId: null});
+    let {strip, laneSelector: actualLaneSelector} = tempStrip;
+    let laneSelector = actualLaneSelector;
+    // Mark as manual so polling doesn't remove it
+    strip.setAttribute('data-manual', '1');
+    // Always assign a unique manual id if not present
+    if (!strip.dataset.manualId) {
+        // Use reg/from/to/category for id if possible
+        let category = '';
+        if (strip.classList.contains('circuit')) category = 'circuit';
+        else if (strip.classList.contains('landaway')) category = 'landaway';
+        else if (strip.classList.contains('arrival')) category = 'arrival';
+        else if (strip.classList.contains('overflight')) category = 'overflight';
+        else if (strip.classList.contains('local')) category = 'local';
+        let baseId = (reg + '-' + (from || '') + '-' + (to || '') + '-' + category).replace(/\W+/g, '').toLowerCase();
+        if (!baseId || baseId.length < 4) baseId = 'mstrip-' + Math.random().toString(36).substr(2, 9);
+        strip.dataset.manualId = baseId;
+    }
     // Set the type field on the strip
     if (type) {
         strip.querySelector('.aircraft-type').textContent = type;
     }
-    // Post to backend
-    const booking = { aircraft: reg, from, to, pob, status, date: (() => {
-        const d = new Date();
-        const dd = String(d.getDate()).padStart(2, '0');
-        const mm = String(d.getMonth() + 1).padStart(2, '0');
-        const yy = String(d.getFullYear()).slice(-2);
-        return `${dd}${mm}${yy}`;
-    })() };
-    fetch('http://127.0.0.1:41000/api/flight-bookings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(booking)
-    })
-    .then(resp => resp.json())
-    .then(data => {
-        // Optionally reload page or add strip
-        window.location.reload();
-    });
+    // Optionally style for overflight (green) only
+    if (strip.classList.contains('overflight')) {
+        strip.style.background = '#6ee7a7';
+    }
+    // Append to correct lane
+    let lane = document.querySelector(actualLaneSelector || laneSelector);
+    if (!lane) lane = document.querySelector('.lane');
+    let container = lane.querySelector('#flight-strip-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'flight-strip-container';
+        const label = lane.querySelector('.lane-label');
+        if (label && label.nextSibling) {
+            lane.insertBefore(container, label.nextSibling);
+        } else {
+            lane.appendChild(container);
+        }
+    }
+    container.appendChild(strip);
+    // Force manualId assignment and event listener attachment for persistence
+    if (strip.hasAttribute('data-manual')) {
+        if (!strip.dataset.manualId) {
+            let category = '';
+            if (strip.classList.contains('circuit')) category = 'circuit';
+            else if (strip.classList.contains('landaway')) category = 'landaway';
+            else if (strip.classList.contains('arrival')) category = 'arrival';
+            else if (strip.classList.contains('overflight')) category = 'overflight';
+            else if (strip.classList.contains('local')) category = 'local';
+            let baseId = (reg + '-' + (from || '') + '-' + (to || '') + '-' + category).replace(/\W+/g, '').toLowerCase();
+            if (!baseId || baseId.length < 4) baseId = 'mstrip-' + Math.random().toString(36).substr(2, 9);
+            strip.dataset.manualId = baseId;
+        }
+        // Attach listeners immediately for new manual strip
+        if (window && typeof window.attachManualListeners === 'function') {
+            window.attachManualListeners();
+        }
+    }
     // Clear preview
     let typePreview = document.getElementById('typePreview');
     if (typePreview) typePreview.textContent = '';
     window._autoType = '';
 });
 </script>
+</script>
+<script src="manual-strip-times.js"></script>
+// ...existing code...
 </html>

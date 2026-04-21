@@ -1,4 +1,14 @@
 
+// --- WebSocket server for real-time updates ---
+let attachWebSocketServer;
+let wsBroadcast;
+try {
+  ({ attachWebSocketServer } = require('./ws-server'));
+  console.log('WebSocket server module loaded for real-time updates.');
+} catch (e) {
+  console.warn('WebSocket server not loaded:', e);
+}
+
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -135,12 +145,17 @@ app.get('/api/flight-bookings', (req, res) => {
 
 // POST a new booking — accepts all fields from Pilot360 or manual entry
 app.post('/api/flight-bookings', async (req, res) => {
-  // Add date in DDMMYY format for flight board filtering
-  const today = new Date();
-  const dd = String(today.getDate()).padStart(2, '0');
-  const mm = String(today.getMonth() + 1).padStart(2, '0');
-  const yy = String(today.getFullYear()).slice(-2);
-  const date = `${dd}${mm}${yy}`;
+
+  // Accept DDMMYY directly from client, fallback to today if missing or invalid
+  let date = req.body.date;
+  if (!date || typeof date !== 'string' || !/^\d{6}$/.test(date)) {
+    // If not in DDMMYY, fallback to today
+    const today = new Date();
+    const dd = String(today.getDate()).padStart(2, '0');
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const yy = String(today.getFullYear()).slice(-2);
+    date = `${dd}${mm}${yy}`;
+  }
 
   const booking = {
     id: nextId++,
@@ -151,6 +166,7 @@ app.post('/api/flight-bookings', async (req, res) => {
 
   bookings.push(booking);
   saveBookings();
+  if (wsBroadcast) wsBroadcast();
   res.json(booking);
 });
 
@@ -200,6 +216,7 @@ app.post('/api/flight-bookings/:id/status', (req, res) => {
   }
 
   saveBookings();
+  if (wsBroadcast) wsBroadcast();
   res.json({ message: 'Booking status updated', booking });
 });
 
@@ -211,6 +228,7 @@ app.post('/api/flight-bookings/:id/approve', (req, res) => {
   }
   booking.status = 'approved';
   saveBookings();
+  if (wsBroadcast) wsBroadcast();
   res.json(booking);
 });
 
@@ -222,9 +240,30 @@ app.post('/api/flight-bookings/:id/reject', (req, res) => {
   }
   booking.status = 'denied';
   saveBookings();
+  if (wsBroadcast) wsBroadcast();
   res.json(booking);
 });
 
-app.listen(PORT, '127.0.0.1', () => {
+
+
+const server = app.listen(PORT, '127.0.0.1', () => {
   console.log(`SkyCommand API running on http://127.0.0.1:${PORT}`);
+  // Attach WebSocket server to this HTTP server
+  if (attachWebSocketServer) {
+    attachWebSocketServer(server);
+    wsBroadcast = attachWebSocketServer.broadcastUpdate;
+    console.log('WebSocket server attached for real-time updates.');
+  }
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\nERROR: Port ${PORT} is already in use.\n` +
+      'Another instance of the server may be running, or the port is blocked.\n' +
+      'Please stop the other process or use a different port.');
+    process.exit(1);
+  } else {
+    console.error('Server error:', err);
+    process.exit(1);
+  }
 });
