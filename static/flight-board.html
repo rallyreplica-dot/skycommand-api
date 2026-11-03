@@ -448,6 +448,10 @@
             <input id="regInput" type="text" />
         </div>
         <div class="input-group">
+            <label for="callsignInput">callsign</label>
+            <input id="callsignInput" type="text" />
+        </div>
+        <div class="input-group">
             <label for="posnInput">Pos'n</label>
             <input id="posnInput" type="text" />
         </div>
@@ -891,43 +895,19 @@ document.querySelectorAll('.droppable').forEach(dropTarget => {
         if (!stripElem) return;
         // If dropped in Completed lane, log and remove
         if (dropTarget.classList.contains('lane-booked-out-bottom')) {
-            // Extract details from strip
-            const reg = stripElem.querySelector('.aircraft-reg')?.textContent || '';
+            const reg = stripElem.querySelector('.aircraft-reg')?.textContent?.trim() || stripElem.dataset.registration || '';
             const type = stripElem.querySelector('.aircraft-type')?.textContent || '';
-            let to = stripElem.querySelector('.strip-route-box .route-content')?.textContent || '';
+            const routeText = stripElem.querySelector('.strip-route-box .route-content > div:last-child')?.textContent?.trim()
+                || stripElem.querySelector('.strip-route-box .route-content')?.textContent?.trim()
+                || '';
+            const routeParts = routeText.split(/\s+-\s+/).map(part => part.trim()).filter(Boolean);
+            const from = stripElem.dataset.routeFrom || (routeParts.length > 1 ? routeParts[0] : '');
+            const to = stripElem.dataset.routeTo || (routeParts.length > 1 ? routeParts[routeParts.length - 1] : (routeParts[0] || ''));
+            const callsign = stripElem.dataset.callsign
+                || stripElem.querySelector('.aircraft-callsign')?.textContent?.trim()
+                || '';
             const atd = stripElem.querySelector('input[placeholder="ATD"]')?.value || '';
             const ata = stripElem.querySelector('input[placeholder="ATA"]')?.value || '';
-            let from = (function() {
-                const route = stripElem.querySelector('.strip-route-box .route-content')?.textContent || '';
-                if (route.includes('-')) return route.split('-')[0];
-                return '';
-            })();
-            // Replace L/C with Local/Circuit for log
-            if (to === 'L') to = 'Local';
-            if (to === 'C') to = 'Circuit';
-            if (from === 'L') from = 'Local';
-            if (from === 'C') from = 'Circuit';
-            // Replace ICAO with airfield name if available
-            function icaoToName(icao) {
-                if (!icao) return icao;
-                icao = icao.trim().toUpperCase();
-                // Find matching airport name from airports.csv loaded into icaoSet and nameToIcao
-                // We need a reverse lookup: ICAO code to name
-                if (window.icaoToNameMap && window.icaoToNameMap[icao]) return window.icaoToNameMap[icao];
-                // Fallback: try to build the map if not present
-                if (window.nameToIcao) {
-                    for (const [name, code] of Object.entries(window.nameToIcao)) {
-                        if (code === icao) {
-                            if (!window.icaoToNameMap) window.icaoToNameMap = {};
-                            window.icaoToNameMap[icao] = name;
-                            return name;
-                        }
-                    }
-                }
-                return icao;
-            }
-            to = icaoToName(to);
-            from = icaoToName(from);
             const name = stripElem.querySelector('.strip-notes')?.value || '';
             const pob = stripElem.querySelector('.final-booking')?.textContent || '';
             // Get color class
@@ -994,7 +974,7 @@ document.querySelectorAll('.droppable').forEach(dropTarget => {
                 });
                 return;
             }
-            const logEntry = { reg, type, to, atd, ata, from, name, pob, colorClass, timestamp: Date.now() };
+            const logEntry = { reg, callsign, type, from, to, atd, ata, name, pob, colorClass, timestamp: Date.now() };
             if (stripElem.dataset.movementCompletionPending === 'true') return;
             stripElem.dataset.movementCompletionPending = 'true';
             const bookingId = stripElem.dataset.bookingId;
@@ -1065,8 +1045,6 @@ function createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta,
     const strip = document.createElement('div');
     strip.dataset.registration = reg || '';
     strip.dataset.callsign = callsign || '';
-    strip.dataset.routeFrom = from || '';
-    strip.dataset.routeTo = to || '';
     strip.dataset.height = height || '';
     strip.dataset.heading = heading || '';
     let laneSelector = '';
@@ -1100,6 +1078,8 @@ function createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta,
     }
     const fromIcao = resolveToIcao(from);
     const toIcao = resolveToIcao(to);
+    strip.dataset.routeFrom = fromIcao;
+    strip.dataset.routeTo = toIcao;
     const ft = (flightType || '').toUpperCase();
     let routeBoxHTML = '';
     if (ft === 'CIRCUIT') {
@@ -1473,6 +1453,7 @@ function autoFillType() {
 document.getElementById('submitBtn').addEventListener('click', function() {
     console.log('Submit handler fired');
     const reg = document.getElementById('regInput').value;
+    const callsign = document.getElementById('callsignInput').value.trim();
     const posn = document.getElementById('posnInput').value;
     let from = document.getElementById('fromInput').value;
     let to = document.getElementById('toInput').value;
@@ -1482,7 +1463,7 @@ document.getElementById('submitBtn').addEventListener('click', function() {
     let type = window._autoType || '';
     let status = 'pending';
     // Determine laneSelector based on category
-    let tempStrip = createFlightStrip({reg, posn, from, to, height, heading, pob, status, bookingId: null});
+    let tempStrip = createFlightStrip({reg, callsign, posn, from, to, height, heading, pob, status, bookingId: null});
     let {strip, laneSelector: actualLaneSelector} = tempStrip;
     let laneSelector = actualLaneSelector;
     // Mark as manual so polling doesn't remove it
