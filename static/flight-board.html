@@ -574,10 +574,20 @@
 
     <script>
 // --- LOAD BOOKINGS FROM API AND CREATE FLIGHT STRIPS ---
+let bookingLoadSequence = 0;
 function loadBookingsFromAPI() {
-    fetch('http://127.0.0.1:41000/api/flight-bookings')
-        .then(resp => resp.json())
+    const sequence = ++bookingLoadSequence;
+    return fetch('/api/flight-bookings')
+        .then(resp => {
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            return resp.json();
+        })
         .then(bookings => {
+            if (sequence !== bookingLoadSequence) return;
+            if (!Array.isArray(bookings)) throw new Error('Expected an array of bookings');
+            document.querySelectorAll('.flight-strip').forEach(strip => {
+                if (!strip.hasAttribute('data-manual')) strip.remove();
+            });
             console.log('[DEBUG] Bookings loaded from API:', bookings);
             console.log('[DEBUG] Number of bookings:', bookings.length);
             // Get today's date in DDMMYY format to match backend
@@ -719,18 +729,22 @@ document.addEventListener('DOMContentLoaded', function() {
     // --- WEBSOCKET REAL-TIME UPDATES ---
     let ws;
     function connectWebSocket() {
-        ws = new WebSocket('ws://127.0.0.1:41000');
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(`${protocol}//${window.location.host}`);
         ws.onopen = function() {
             console.log('[WebSocket] Connected to server');
+            loadBookingsFromAPI();
+            if (typeof window.loadManualStripsFromAPI === 'function') {
+                window.loadManualStripsFromAPI();
+            }
         };
         ws.onmessage = function(event) {
             console.log('[WebSocket] Message received:', event.data);
             if (event.data === 'update') {
-                // Remove only non-manual (non-green) strips
-                document.querySelectorAll('.flight-strip').forEach(e => {
-                    if (!e.hasAttribute('data-manual')) e.remove();
-                });
                 loadBookingsFromAPI();
+                if (typeof window.loadManualStripsFromAPI === 'function') {
+                    window.loadManualStripsFromAPI();
+                }
                 if (window && typeof window.restoreManualStripTimes === 'function') {
                     setTimeout(window.restoreManualStripTimes, 100);
                 }
@@ -911,6 +925,12 @@ document.querySelectorAll('.droppable').forEach(dropTarget => {
             // Get color class
             const colorClass = Array.from(stripElem.classList).find(cls => ['landaway','circuit','local','arrival','overflight'].includes(cls)) || '';
             if (colorClass === 'overflight') {
+                if (stripElem.hasAttribute('data-manual') && stripElem.dataset.manualId) {
+                    window.completeManualStrip(stripElem).catch(error => {
+                        console.error('[FlightBoard] Manual overflight completion failed:', error);
+                    });
+                    return;
+                }
                 if (stripElem.dataset.overflightCompletionPending === 'true') return;
 
                 const now = new Date();
@@ -972,13 +992,19 @@ document.querySelectorAll('.droppable').forEach(dropTarget => {
                 });
                 return;
             }
+            if (stripElem.hasAttribute('data-manual') && stripElem.dataset.manualId) {
+                window.completeManualStrip(stripElem).catch(error => {
+                    console.error('[FlightBoard] Manual movement completion failed:', error);
+                });
+                return;
+            }
             const logEntry = { reg, callsign, type, from, to, atd, ata, name, pob, colorClass, timestamp: Date.now() };
             if (stripElem.dataset.movementCompletionPending === 'true') return;
             stripElem.dataset.movementCompletionPending = 'true';
             const bookingId = stripElem.dataset.bookingId;
             const endpoint = bookingId
                 ? `/api/flight-bookings/${encodeURIComponent(bookingId)}/complete`
-                : 'http://127.0.0.1:41000/api/movements';
+                : '/api/movements';
             fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1032,6 +1058,10 @@ document.querySelectorAll('.droppable').forEach(dropTarget => {
             }
             container.appendChild(stripElem);
         }
+        if (stripElem.hasAttribute('data-manual') && stripElem.dataset.manualId) {
+            stripElem.dataset.lane = dropTarget.dataset.lane || '';
+            window.scheduleManualStripSave(stripElem, 0);
+        }
     });
 });
 
@@ -1043,6 +1073,8 @@ function createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta,
     const strip = document.createElement('div');
     strip.dataset.registration = reg || '';
     strip.dataset.callsign = callsign || '';
+    strip.dataset.posn = posn || '';
+    strip.dataset.flightType = flightType || '';
     strip.dataset.height = height || '';
     strip.dataset.heading = heading || '';
     let laneSelector = '';
@@ -1459,26 +1491,11 @@ document.getElementById('submitBtn').addEventListener('click', function() {
     const heading = document.getElementById('headingInput').value;
     const pob = document.getElementById('pobInput').value;
     let type = window._autoType || '';
-    let status = 'pending';
+    let status = 'manual';
     // Determine laneSelector based on category
     let tempStrip = createFlightStrip({reg, callsign, posn, from, to, height, heading, pob, status, bookingId: null});
     let {strip, laneSelector: actualLaneSelector} = tempStrip;
     let laneSelector = actualLaneSelector;
-    // Mark as manual so polling doesn't remove it
-    strip.setAttribute('data-manual', '1');
-    // Always assign a unique manual id if not present
-    if (!strip.dataset.manualId) {
-        // Use reg/from/to/category for id if possible
-        let category = '';
-        if (strip.classList.contains('circuit')) category = 'circuit';
-        else if (strip.classList.contains('landaway')) category = 'landaway';
-        else if (strip.classList.contains('arrival')) category = 'arrival';
-        else if (strip.classList.contains('overflight')) category = 'overflight';
-        else if (strip.classList.contains('local')) category = 'local';
-        let baseId = (reg + '-' + (from || '') + '-' + (to || '') + '-' + category).replace(/\W+/g, '').toLowerCase();
-        if (!baseId || baseId.length < 4) baseId = 'mstrip-' + Math.random().toString(36).substr(2, 9);
-        strip.dataset.manualId = baseId;
-    }
     // Set the type field on the strip
     if (type) {
         strip.querySelector('.aircraft-type').textContent = type;
@@ -1501,25 +1518,7 @@ document.getElementById('submitBtn').addEventListener('click', function() {
             lane.appendChild(container);
         }
     }
-    container.appendChild(strip);
-    // Force manualId assignment and event listener attachment for persistence
-    if (strip.hasAttribute('data-manual')) {
-        if (!strip.dataset.manualId) {
-            let category = '';
-            if (strip.classList.contains('circuit')) category = 'circuit';
-            else if (strip.classList.contains('landaway')) category = 'landaway';
-            else if (strip.classList.contains('arrival')) category = 'arrival';
-            else if (strip.classList.contains('overflight')) category = 'overflight';
-            else if (strip.classList.contains('local')) category = 'local';
-            let baseId = (reg + '-' + (from || '') + '-' + (to || '') + '-' + category).replace(/\W+/g, '').toLowerCase();
-            if (!baseId || baseId.length < 4) baseId = 'mstrip-' + Math.random().toString(36).substr(2, 9);
-            strip.dataset.manualId = baseId;
-        }
-        // Attach listeners immediately for new manual strip
-        if (window && typeof window.attachManualListeners === 'function') {
-            window.attachManualListeners();
-        }
-    }
+    window.addManualStrip(strip, lane);
     // Clear preview
     let typePreview = document.getElementById('typePreview');
     if (typePreview) typePreview.textContent = '';
@@ -1527,6 +1526,7 @@ document.getElementById('submitBtn').addEventListener('click', function() {
 });
 </script>
 </script>
+<script src="manual-strip-sync.js"></script>
 <script src="manual-strip-times.js"></script>
 // ...existing code...
 </html>

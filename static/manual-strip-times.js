@@ -71,6 +71,7 @@
                 strip = document.getElementById(domid);
             }
             if (strip) {
+                if (strip.dataset.serverPersisted === 'true') return;
                 const l = strip.querySelector('.quarter.bottom-left input');
                 const r = strip.querySelector('.quarter.bottom-right input');
                 if (l) {

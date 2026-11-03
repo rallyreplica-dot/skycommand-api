@@ -143,6 +143,234 @@ app.post('/api/overflights', (req, res) => {
   }
 });
 
+const MANUAL_STRIPS_FILE = path.join(__dirname, 'manual-strips.json');
+const MANUAL_STRIP_LANES = new Set([
+  'booked-out-top',
+  'taxying-in',
+  'taxying-out',
+  'circuit-top',
+  'circuit-bottom',
+  'local',
+  'booked-in',
+]);
+const MANUAL_STRIP_CATEGORIES = new Set(['landaway', 'circuit', 'local', 'arrival', 'overflight']);
+
+function loadManualStrips() {
+  try {
+    const records = JSON.parse(fs.readFileSync(MANUAL_STRIPS_FILE, 'utf8'));
+    if (!Array.isArray(records)) throw new Error('Manual strip store must contain an array');
+    return records;
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    console.error('Failed to load manual strips:', error);
+    throw error;
+  }
+}
+
+let manualStrips = loadManualStrips();
+
+function findManualStripCompletion(id) {
+  const movement = movements.find(record => String(record.manualStripId) === id);
+  if (movement) return { kind: 'movement', record: movement };
+  const overflight = overflights.find(record => record.idempotencyKey === `manual:${id}`);
+  if (overflight) return { kind: 'overflight', record: overflight };
+  return null;
+}
+
+function saveManualStrips(updatedManualStrips) {
+  writeJsonAtomically(MANUAL_STRIPS_FILE, updatedManualStrips);
+  manualStrips = updatedManualStrips;
+}
+
+function normalizeManualStrip(id, body, existing) {
+  const text = key => String(
+    body[key] !== undefined ? body[key] : (existing && existing[key]) || ''
+  ).trim();
+  const boolean = key => body[key] !== undefined
+    ? body[key] === true || body[key] === 'true'
+    : Boolean(existing && existing[key]);
+  const now = Date.now();
+
+  return {
+    id,
+    reg: text('reg'),
+    callsign: text('callsign'),
+    posn: text('posn'),
+    from: text('from'),
+    to: text('to'),
+    type: text('type'),
+    flightType: text('flightType'),
+    category: text('category'),
+    status: text('status') || 'active',
+    pob: text('pob'),
+    height: text('height'),
+    heading: text('heading'),
+    lane: text('lane'),
+    etd: text('etd'),
+    eta: text('eta'),
+    atd: text('atd'),
+    ata: text('ata'),
+    onTime: text('onTime'),
+    offTime: text('offTime'),
+    notes: text('notes'),
+    rwy: boolean('rwy'),
+    q: boolean('q'),
+    fuel: boolean('fuel'),
+    lights: boolean('lights'),
+    ifr: boolean('ifr'),
+    createdAt: existing ? existing.createdAt : now,
+    updatedAt: now,
+  };
+}
+
+function validateManualStrip(record) {
+  return MANUAL_STRIP_CATEGORIES.has(record.category)
+    && MANUAL_STRIP_LANES.has(record.lane);
+}
+
+app.get('/api/manual-strips', (req, res) => {
+  try {
+    const activeStrips = manualStrips.filter(strip => !findManualStripCompletion(strip.id));
+    if (activeStrips.length !== manualStrips.length) {
+      saveManualStrips(activeStrips);
+      if (wsBroadcast) wsBroadcast();
+    }
+    return res.json(manualStrips);
+  } catch (error) {
+    console.error('Failed to load active manual strips:', error);
+    return res.status(500).json({ error: 'Failed to load active manual strips' });
+  }
+});
+
+app.put('/api/manual-strips/:id', (req, res) => {
+  const id = String(req.params.id || '').trim();
+  if (!id || id.length > 128) {
+    return res.status(400).json({ error: 'A valid manual strip ID is required' });
+  }
+  if (findManualStripCompletion(id)) {
+    return res.status(409).json({ error: 'Completed manual strip cannot be changed' });
+  }
+
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const existing = manualStrips.find(strip => strip.id === id);
+  const record = normalizeManualStrip(id, body, existing);
+  if (!validateManualStrip(record)) {
+    return res.status(400).json({ error: 'Invalid manual strip category or lane' });
+  }
+
+  try {
+    const updatedStrips = manualStrips.filter(strip => strip.id !== id).concat(record);
+    saveManualStrips(updatedStrips);
+  } catch (error) {
+    console.error(`Failed to save manual strip ${id}:`, error);
+    return res.status(500).json({ error: 'Failed to save manual strip' });
+  }
+
+  if (wsBroadcast) wsBroadcast();
+  return res.json(record);
+});
+
+app.post('/api/manual-strips/:id/complete', (req, res) => {
+  const id = String(req.params.id || '').trim();
+  if (!id || id.length > 128) {
+    return res.status(400).json({ error: 'A valid manual strip ID is required' });
+  }
+
+  let strip = manualStrips.find(record => record.id === id);
+  let completion = findManualStripCompletion(id);
+  const duplicate = completion !== null;
+  if (!strip && !completion) {
+    return res.status(404).json({ error: 'Manual strip not found' });
+  }
+
+  if (strip) {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    strip = normalizeManualStrip(id, body, strip);
+    if (!validateManualStrip(strip)) {
+      return res.status(400).json({ error: 'Invalid manual strip category or lane' });
+    }
+    try {
+      saveManualStrips(manualStrips.filter(record => record.id !== id).concat(strip));
+    } catch (error) {
+      console.error(`Failed to save final state for manual strip ${id}:`, error);
+      return res.status(500).json({ error: 'Failed to save manual strip before completion' });
+    }
+  }
+
+  if (!completion) {
+    if (strip.category === 'overflight') {
+      const timestamp = Date.now();
+      const completedAt = new Date(timestamp).toISOString();
+      try {
+        const result = recordOverflight({
+          idempotencyKey: `manual:${id}`,
+          reg: strip.reg,
+          type: strip.type,
+          date: completedAt.slice(0, 10),
+          time: completedAt.slice(11, 16),
+          timestamp,
+          completedAt,
+          callsign: strip.callsign,
+          from: strip.from,
+          to: strip.to,
+          route: [strip.from, strip.to].filter(Boolean).join(' - '),
+          onTime: strip.onTime || strip.atd,
+          offTime: strip.offTime || strip.ata,
+          height: strip.height,
+          heading: strip.heading,
+        }, `manual:${id}`);
+        completion = { kind: 'overflight', record: result.entry };
+      } catch (error) {
+        console.error(`Failed to save overflight for manual strip ${id}:`, error);
+        return res.status(500).json({ error: 'Failed to save overflight completion' });
+      }
+    } else {
+      const movement = {
+        reg: strip.reg,
+        callsign: strip.callsign,
+        type: strip.type,
+        from: strip.from,
+        to: strip.to,
+        atd: strip.atd,
+        ata: strip.ata,
+        name: strip.notes,
+        pob: strip.pob,
+        colorClass: strip.category,
+        timestamp: Date.now(),
+        manualStripId: id,
+      };
+      const updatedMovements = [...movements, movement];
+      try {
+        saveMovements(updatedMovements);
+      } catch (error) {
+        console.error(`Failed to save movement for manual strip ${id}:`, error);
+        return res.status(500).json({ error: 'Failed to save movement completion' });
+      }
+      movements = updatedMovements;
+      completion = { kind: 'movement', record: movement };
+    }
+  }
+
+  try {
+    saveManualStrips(manualStrips.filter(record => record.id !== id));
+  } catch (error) {
+    console.error(`Completion saved but manual strip ${id} could not be removed:`, error);
+    return res.status(500).json({
+      error: 'Completion saved, but manual strip removal failed; retry completion',
+      recordSaved: true,
+      retryable: true,
+    });
+  }
+
+  if (wsBroadcast) wsBroadcast();
+  return res.json({
+    message: 'Manual strip completed',
+    kind: completion.kind,
+    record: completion.record,
+    duplicate,
+  });
+});
+
 // Serve static files (flight-board, etc.)
 app.use('/static', express.static(path.join(__dirname, 'static')));
 // Serve main project assets (airports.csv, etc.)
