@@ -932,6 +932,63 @@ document.querySelectorAll('.droppable').forEach(dropTarget => {
             const pob = stripElem.querySelector('.final-booking')?.textContent || '';
             // Get color class
             const colorClass = Array.from(stripElem.classList).find(cls => ['landaway','circuit','local','arrival','overflight'].includes(cls)) || '';
+            if (colorClass === 'overflight') {
+                if (stripElem.dataset.overflightCompletionPending === 'true') return;
+
+                const now = new Date();
+                const routeText = stripElem.querySelector('.strip-route-box .route-content > div:last-child')?.textContent?.trim() || '';
+                const routeParts = routeText.split(/\s+-\s+/);
+                const routeFrom = stripElem.dataset.routeFrom || (routeParts.length > 1 ? routeParts[0] : from);
+                const routeTo = stripElem.dataset.routeTo || (routeParts.length > 1 ? routeParts[routeParts.length - 1] : to);
+                const onTime = stripElem.querySelector('.quarter.bottom-left input')?.value || '';
+                const offTime = stripElem.querySelector('.quarter.bottom-right input')?.value || '';
+                const idempotencyKey = stripElem.dataset.bookingId
+                    ? `booking:${stripElem.dataset.bookingId}`
+                    : `strip:${stripElem.id || stripElem.dataset.manualId}`;
+                const overflight = {
+                    idempotencyKey,
+                    reg: stripElem.dataset.registration || reg,
+                    type,
+                    date: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`,
+                    time: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
+                    timestamp: now.getTime(),
+                    completedAt: now.toISOString(),
+                    callsign: stripElem.dataset.callsign || stripElem.querySelector('.aircraft-callsign')?.textContent?.trim() || '',
+                    from: routeFrom,
+                    to: routeTo,
+                    route: [routeFrom, routeTo].filter(Boolean).join(' - '),
+                    onTime,
+                    offTime,
+                    height: stripElem.dataset.height || '',
+                    heading: stripElem.dataset.heading || '',
+                };
+                if (!stripElem.id) stripElem.id = `flightStrip-${Math.random().toString(36).slice(2, 11)}`;
+                stripElem.dataset.overflightCompletionPending = 'true';
+                overflight.idempotencyKey = stripElem.dataset.bookingId
+                    ? `booking:${stripElem.dataset.bookingId}`
+                    : `strip:${stripElem.id}`;
+
+                fetch('/api/overflights', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(overflight)
+                })
+                .then(async response => {
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+                    return result;
+                })
+                .then(result => {
+                    console.log('[FlightBoard] Recorded overflight:', result);
+                    stripElem.remove();
+                })
+                .catch(error => {
+                    delete stripElem.dataset.overflightCompletionPending;
+                    console.error('[FlightBoard] Failed to record overflight:', error);
+                    alert(`Overflight was not recorded: ${error.message}`);
+                });
+                return;
+            }
             // Save to localStorage
             const logEntry = { reg, type, to, atd, ata, from, name, pob, colorClass, timestamp: Date.now() };
             let log = [];
@@ -989,6 +1046,12 @@ function createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta,
     const BASE = 'EGSX';
     let category = '';
     const strip = document.createElement('div');
+    strip.dataset.registration = reg || '';
+    strip.dataset.callsign = callsign || '';
+    strip.dataset.routeFrom = from || '';
+    strip.dataset.routeTo = to || '';
+    strip.dataset.height = height || '';
+    strip.dataset.heading = heading || '';
     let laneSelector = '';
     let regOrCallsign = (reg || '').toUpperCase();
     let route = (from + '-' + to).toUpperCase();

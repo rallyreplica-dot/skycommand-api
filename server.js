@@ -55,6 +55,72 @@ app.post('/api/movements', (req, res) => {
   res.json({ message: 'Movement logged', entry });
 });
 
+const OVERFLIGHTS_FILE = path.join(__dirname, 'overflights.json');
+
+function loadOverflights() {
+  try {
+    const records = JSON.parse(fs.readFileSync(OVERFLIGHTS_FILE, 'utf8'));
+    if (!Array.isArray(records)) throw new Error('Overflight store must contain an array');
+    return records;
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    console.error('Failed to load overflights:', error);
+    throw error;
+  }
+}
+
+let overflights = loadOverflights();
+
+app.get('/api/overflights', (req, res) => {
+  res.json(overflights);
+});
+
+app.post('/api/overflights', (req, res) => {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const idempotencyKey = typeof body.idempotencyKey === 'string' ? body.idempotencyKey.trim() : '';
+  if (!idempotencyKey) {
+    return res.status(400).json({ error: 'idempotencyKey is required' });
+  }
+
+  const existing = overflights.find(record => record.idempotencyKey === idempotencyKey);
+  if (existing) {
+    return res.json({ message: 'Overflight already recorded', entry: existing, duplicate: true });
+  }
+
+  const timestamp = Number.isFinite(Number(body.timestamp)) && body.timestamp !== ''
+    ? Number(body.timestamp)
+    : Date.now();
+  const completedAt = new Date(timestamp);
+  const record = {
+    idempotencyKey,
+    category: 'overflight',
+    reg: String(body.reg || '').trim(),
+    type: String(body.type || '').trim(),
+    date: String(body.date || completedAt.toISOString().slice(0, 10)),
+    time: String(body.time || ''),
+    timestamp,
+    completedAt: String(body.completedAt || completedAt.toISOString()),
+    callsign: String(body.callsign || '').trim(),
+    from: String(body.from || '').trim(),
+    to: String(body.to || '').trim(),
+    route: String(body.route || '').trim(),
+    onTime: String(body.onTime || '').trim(),
+    offTime: String(body.offTime || '').trim(),
+    height: String(body.height || '').trim(),
+    heading: String(body.heading || '').trim(),
+  };
+  const updatedOverflights = [...overflights, record];
+  try {
+    fs.writeFileSync(OVERFLIGHTS_FILE, JSON.stringify(updatedOverflights, null, 2), 'utf8');
+  } catch (error) {
+    console.error('Failed to save overflight:', error);
+    return res.status(500).json({ error: 'Failed to save overflight' });
+  }
+
+  overflights = updatedOverflights;
+  return res.status(201).json({ message: 'Overflight recorded', entry: record, duplicate: false });
+});
+
 // Serve static files (flight-board, etc.)
 app.use('/static', express.static(path.join(__dirname, 'static')));
 // Serve main project assets (airports.csv, etc.)
