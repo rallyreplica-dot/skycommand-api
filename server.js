@@ -16,7 +16,7 @@ const fs = require('fs');
 
 const app = express();
 const PORT = 41000;
-
+app.use(express.json());
 // --- Movements Log Persistence ---
 const MOVEMENTS_FILE = path.join(__dirname, 'movements-log.json');
 
@@ -38,7 +38,10 @@ function saveMovements(movements) {
 }
 
 let movements = loadMovements();
-
+// Retrieve all completed aircraft movements
+app.get('/api/movements', (req, res) => {
+  res.json(movements);
+});
 
 
 // POST a new completed movement (from flight board)

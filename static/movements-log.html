@@ -169,16 +169,6 @@
     .movements-log tr:hover td {
         background: #e0f3ff;
     }
-    .movements-log td[contenteditable="true"]:focus {
-        outline: 2px solid #1976d2;
-        background: #fffbe6;
-    }
-    .movements-log td[contenteditable="true"]:hover {
-        background: #f0f8ff;
-    }
-    .movements-log td {
-        cursor: pointer;
-    }
     @media (max-width: 900px) {
         .movements-log th, .movements-log td { font-size: 0.95em; padding: 4px 4px; }
     }
@@ -227,7 +217,6 @@
             </div>
         </div>
         <script>
-        const SKYCOMMAND_API_BASE = 'http://localhost:41000';
         console.log('MOVEMENTS LOG SCRIPT LOADED');
         // Removed import/export/reset/sample logic
         </script>
@@ -322,390 +311,296 @@ fetch('assets/airports_europe_clean.csv')
         renderMovementsLog();
     });
 
-// Render movements log into the table, replacing ICAO codes with airport names
+// Render completed aerodrome movements and keep denied bookings independent.
 let logSortKey = 'timestamp';
 let logSortAsc = true;
 let logFilter = '';
-function renderMovementsLog() {
-    console.log('FETCHING BOOKINGS...');
-    fetch(`${SKYCOMMAND_API_BASE}/api/flight-bookings`)
-      .then(resp => resp.json())
-      .then(bookings => {
-        console.log('BOOKINGS FROM API', bookings);
-        if (!bookings || !Array.isArray(bookings) || bookings.length === 0) {
-          bookings = [];
-        }
-        const denied = bookings.filter(b => b.status === 'denied');
-        console.log('DENIED BOOKINGS', denied);
-                // Render denied bookings section
-                const deniedContainer = document.getElementById('denied-bookings');
-                if (deniedContainer) {
-                    if (denied.length > 0) {
-                        deniedContainer.style.display = '';
-                        deniedContainer.innerHTML = '<span style="font-size:1.1em;">Denied Bookings:</span><br>';
-                        denied.forEach((b, idx) => {
-                            const entryBox = document.createElement('div');
-                            entryBox.style.margin = '8px 0';
-                            entryBox.style.padding = '8px';
-                            entryBox.style.background = '#fff0f0';
-                            entryBox.style.border = '1px solid #d32f2f';
-                            // Render as a single-row table matching the movements log columns
-                            const table = document.createElement('table');
-                            table.style.width = '100%';
-                            table.style.background = '#fff';
-                            table.style.marginBottom = '4px';
-                            table.style.borderCollapse = 'collapse';
-                            table.style.tableLayout = 'fixed';
-                            const thead = document.createElement('thead');
-                            const headRow = document.createElement('tr');
-                            [
-                                'Registration', 'Callsign', 'Type', 'TO', 'ATD', 'ATA', 'FROM', 'Name', 'POB'
-                            ].forEach(label => {
-                                const th = document.createElement('th');
-                                th.textContent = label;
-                                th.style.background = '#ffeaea';
-                                th.style.color = '#b71c1c';
-                                th.style.fontWeight = 'bold';
-                                th.style.padding = '4px 6px';
-                                th.style.border = '1px solid #ffd6d6';
-                                th.style.textAlign = 'left';
-                                headRow.appendChild(th);
-                            });
-                            thead.appendChild(headRow);
-                            table.appendChild(thead);
-                            const tbody = document.createElement('tbody');
-                            const row = document.createElement('tr');
-                            [
-                                b.aircraftId || b.reg || '',
-                                b.callsign || '',
-                                b.type || '',
-                                b.to || '',
-                                b.atd || '',
-                                b.ata || '',
-                                b.from || '',
-                                b.name || '',
-                                b.pob || ''
-                            ].forEach(val => {
-                                const td = document.createElement('td');
-                                td.textContent = val;
-                                td.style.padding = '4px 6px';
-                                td.style.border = '1px solid #ffd6d6';
-                                td.style.background = '#fff';
-                                td.style.color = '#b71c1c';
-                                row.appendChild(td);
-                            });
-                            tbody.appendChild(row);
-                            table.appendChild(tbody);
-                            entryBox.appendChild(table);
+let movementRenderSequence = 0;
+const aircraftTypeCache = new Map();
+let aircraftTypeLookupPromise = null;
 
-                            const actions = document.createElement('div');
-                            actions.style.marginTop = '4px';
+function normalizeAircraftRegistration(registration) {
+    return String(registration || '').trim().toUpperCase().replace(/[-\s]/g, '');
+}
 
-                            const reapproveBtn = document.createElement('button');
-                            reapproveBtn.textContent = 'Reapprove';
-                            reapproveBtn.style.marginRight = '6px';
-                            reapproveBtn.onclick = async () => {
-                                if (!b.id) return alert('No booking ID');
-                                reapproveBtn.disabled = true;
-                                reapproveBtn.textContent = 'Reapproving...';
-                                try {
-                                    const resp = await fetch(`${SKYCOMMAND_API_BASE}/api/flight-bookings/${b.id}/status`, {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ status: 'approved' })
-                                    });
-                                    const result = await resp.json();
-                                    if (resp.ok) {
-                                        alert('Booking reapproved!');
-                                        renderMovementsLog();
-                                    } else {
-                                        alert('Error: ' + (result.error || 'Unknown error'));
-                                    }
-                                } catch (err) {
-                                    alert('Request failed: ' + err);
-                                } finally {
-                                    reapproveBtn.disabled = false;
-                                    reapproveBtn.textContent = 'Reapprove';
-                                }
-                            };
-
-                            const editBtn = document.createElement('button');
-                            editBtn.textContent = 'Edit';
-                            editBtn.style.marginRight = '6px';
-                            editBtn.onclick = () => alert('Edit not implemented');
-
-                            const deleteBtn = document.createElement('button');
-                            deleteBtn.textContent = 'Delete';
-                            deleteBtn.onclick = () => alert('Delete not implemented');
-
-                            actions.appendChild(reapproveBtn);
-                            actions.appendChild(editBtn);
-                            actions.appendChild(deleteBtn);
-                            entryBox.appendChild(actions);
-                            deniedContainer.appendChild(entryBox);
-                        });
-                    } else {
-                        deniedContainer.style.display = 'none';
-                        deniedContainer.innerHTML = '';
-                    }
-                }
-        // ...existing rendering logic below, replace 'log' with 'bookings'...
-        // Sort
-        bookings.sort((a, b) => {
-          let ka = (a[logSortKey]||'').toUpperCase ? (a[logSortKey]||'').toUpperCase() : (a[logSortKey]||'');
-          let kb = (b[logSortKey]||'').toUpperCase ? (b[logSortKey]||'').toUpperCase() : (b[logSortKey]||'');
-          if (logSortKey === 'atd' || logSortKey === 'ata') {
-              return logSortAsc ? ka.localeCompare(kb) : kb.localeCompare(ka);
-          }
-          if (ka < kb) return logSortAsc ? -1 : 1;
-          if (ka > kb) return logSortAsc ? 1 : -1;
-          return 0;
-        });
-        const tbody = document.getElementById('movementsLogBody');
-        if (!tbody) return;
-        tbody.innerHTML = '';
-        bookings.forEach((entry, idx) => {
-          // ...existing row rendering logic, unchanged...
-          let toDisplay = entry.to || '';
-          let fromDisplay = entry.from || '';
-          function lookupName(val) {
-              if (!val) return '';
-              let code = val.trim().toUpperCase();
-              if (code.includes('-')) {
-                  return code.split('-').map(part => icaoToName[part] || part).join(' - ');
-              }
-              return icaoToName[code] || code;
-          }
-          // Debug: Show what is being looked up
-          console.log('Entry:', entry);
-          console.log('Looking up TO:', toDisplay, 'Result:', lookupName(toDisplay));
-          console.log('Looking up FROM:', fromDisplay, 'Result:', lookupName(fromDisplay));
-          toDisplay = lookupName(toDisplay);
-          fromDisplay = lookupName(fromDisplay);
-          if ((entry.colorClass||'').toUpperCase() === 'LANDAWAY') {
-              let toVal = (entry.to||'').replace(/\s+/g, '').toUpperCase();
-              const depAirfield = 'EGSX';
-              if (toVal.startsWith(depAirfield + '-')) {
-                  let dest = toVal.substring(depAirfield.length + 1);
-                  toDisplay = icaoToName[dest] || dest;
-              } else if (toVal === depAirfield) {
-                  toDisplay = '';
-              } else {
-                  toDisplay = icaoToName[toVal] || toVal;
-              }
-              fromDisplay = '';
-          } else if ((entry.colorClass||'').toUpperCase() === 'OVERFLIGHT' || (entry.colorClass||'').toUpperCase() === 'TRANSIT') {
-              let toVal = (entry.to||'').replace(/\s+/g, '').toUpperCase();
-              let fromVal = (entry.from||'').replace(/\s+/g, '').toUpperCase();
-              if (/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(toVal)) {
-                  let parts = toVal.split('-');
-                  toDisplay = icaoToName[parts[1]] || parts[1];
-              } else {
-                  toDisplay = icaoToName[toVal] || toVal;
-              }
-              if (fromVal === 'EGSX') fromDisplay = '';
-              else if (icaoToName[fromDisplay.toUpperCase()]) fromDisplay = icaoToName[fromDisplay.toUpperCase()];
-          } else {
-              let toVal = (entry.to||'').replace(/\s+/g, '').toUpperCase();
-              if (/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(toVal)) {
-                  let [a, b] = toVal.split('-');
-                  if (a === b) {
-                      toDisplay = a;
-                  } else {
-                      if (icaoToName[toDisplay.toUpperCase()]) toDisplay = icaoToName[toDisplay.toUpperCase()];
-                  }
-              } else {
-                  if (icaoToName[toDisplay.toUpperCase()]) toDisplay = icaoToName[toDisplay.toUpperCase()];
-              }
-              if (icaoToName[fromDisplay.toUpperCase()]) fromDisplay = icaoToName[fromDisplay.toUpperCase()];
-              if ((entry.from||'').toUpperCase() === 'EGSX') fromDisplay = '';
-              if ((entry.colorClass||'').toUpperCase() === 'ARRIVAL') toDisplay = '';
-          }
-          const tr = document.createElement('tr');
-          tr.innerHTML = `
-              <td contenteditable="true" data-key="reg">${(entry.reg || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
-              <td contenteditable="true" data-key="callsign">${(entry.callsign || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
-              <td contenteditable="true" data-key="type">${(entry.type || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
-              <td contenteditable="true" data-key="to">${(toDisplay || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
-              <td contenteditable="true" data-key="atd">${(entry.atd || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
-              <td contenteditable="true" data-key="ata">${(entry.ata || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
-              <td contenteditable="true" data-key="from">${(fromDisplay || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
-              <td contenteditable="true" data-key="name">${(entry.name || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
-              <td contenteditable="true" data-key="pob">${(entry.pob || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
-          `;
-          if (entry.colorClass) tr.classList.add(entry.colorClass);
-          tr.querySelectorAll('[contenteditable]').forEach(cell => {
-              cell.addEventListener('blur', function() {
-                  let newVal = this.innerText.replace(/\s+/g, ' ').replace(/\n/g, '').trim();
-                  let key = this.getAttribute('data-key');
-                  entry[key] = newVal;
-                  // No localStorage update for API data
-                  this.innerText = newVal;
-              });
-              cell.addEventListener('keydown', function(e) {
-                  if (e.key === 'Enter') { e.preventDefault(); this.blur(); }
-              });
-              cell.addEventListener('paste', function(e) {
-                  e.preventDefault();
-                  let text = (e.clipboardData || window.clipboardData).getData('text');
-                  text = text.replace(/\s+/g, ' ').replace(/\n/g, '');
-                  document.execCommand('insertText', false, text);
-              });
-          });
-          tbody.appendChild(tr);
-        });
-      });
-        // Filter by movement type
-        if (logFilter) {
-            const filter = logFilter.toUpperCase();
-            if (filter === 'DEPARTURES') {
-                log = log.filter(entry => (entry.colorClass||'').toUpperCase() === 'LANDAWAY');
-            } else if (filter === 'ARRIVALS') {
-                log = log.filter(entry => (entry.colorClass||'').toUpperCase() === 'ARRIVAL');
-            } else if (filter === 'LOCAL') {
-                log = log.filter(entry => (entry.colorClass||'').toUpperCase() === 'LOCAL');
-            } else if (filter === 'CIRCUITS') {
-                log = log.filter(entry => (entry.colorClass||'').toUpperCase() === 'CIRCUIT');
-            }
-        }
-    // Sort
-    log.sort((a, b) => {
-        let ka = (a[logSortKey]||'').toUpperCase ? (a[logSortKey]||'').toUpperCase() : (a[logSortKey]||'');
-        let kb = (b[logSortKey]||'').toUpperCase ? (b[logSortKey]||'').toUpperCase() : (b[logSortKey]||'');
-        if (logSortKey === 'atd' || logSortKey === 'ata') {
-            // Sort times as HH:MM
-            return logSortAsc ? ka.localeCompare(kb) : kb.localeCompare(ka);
-        }
-        if (ka < kb) return logSortAsc ? -1 : 1;
-        if (ka > kb) return logSortAsc ? 1 : -1;
-        return 0;
+async function ensureAircraftTypes(entries) {
+    const registrations = new Map();
+    entries.forEach(entry => {
+        if (String(entry.type || '').trim()) return;
+        const registration = String(entry.reg || entry.aircraftId || '').trim().toUpperCase();
+        const key = normalizeAircraftRegistration(registration);
+        if (key && !aircraftTypeCache.has(key)) registrations.set(key, registration);
     });
+
+    if (registrations.size === 0) return;
+    if (aircraftTypeLookupPromise) await aircraftTypeLookupPromise;
+
+    const pendingRegistrations = new Map(
+        [...registrations].filter(([key]) => !aircraftTypeCache.has(key))
+    );
+    if (pendingRegistrations.size === 0) return;
+
+    const lookupPromise = (async () => {
+        const response = await fetch('/api/aircraft-types', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ regs: [...pendingRegistrations.values()] })
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const results = await response.json();
+        if (!results || typeof results !== 'object' || Array.isArray(results)) {
+            throw new Error('Expected an object of registration-to-type results');
+        }
+
+        const normalizedResults = new Map(
+            Object.entries(results).map(([registration, type]) => [
+                normalizeAircraftRegistration(registration),
+                typeof type === 'string' && type.trim() ? type.trim() : null
+            ])
+        );
+        pendingRegistrations.forEach((registration, key) => {
+            if (!normalizedResults.has(key)) {
+                throw new Error(`No aircraft type result returned for ${registration}`);
+            }
+            aircraftTypeCache.set(key, normalizedResults.get(key));
+        });
+    })();
+
+    aircraftTypeLookupPromise = lookupPromise;
+    try {
+        await lookupPromise;
+    } finally {
+        if (aircraftTypeLookupPromise === lookupPromise) aircraftTypeLookupPromise = null;
+    }
+}
+
+function displayAirport(value) {
+    const code = String(value || '').trim().toUpperCase();
+    const airportNameFallbacks = { EGSX: 'North Weald', EGTR: 'Elstree' };
+    return icaoToName[code] || airportNameFallbacks[code] || String(value || '').trim();
+}
+
+function getMovementRoute(entry) {
+    const route = String(entry.to || '').split(/\s*-\s*/).map(part => part.trim()).filter(Boolean);
+    const origin = String(entry.from || '').trim() || (route.length > 1 ? route[0] : '');
+    const destination = route.length > 1 ? route[route.length - 1] : (route[0] || '');
+    return { origin: displayAirport(origin), destination: displayAirport(destination) };
+}
+
+function formatMovementTime(value) {
+    const time = String(value || '').trim();
+    return /^\d{4}$/.test(time) ? `${time.slice(0, 2)}:${time.slice(2)}` : time;
+}
+
+function formatMovementDate(timestamp) {
+    const date = new Date(typeof timestamp === 'number' || /^\d+$/.test(String(timestamp)) ? Number(timestamp) : timestamp);
+    if (Number.isNaN(date.getTime())) return '';
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function isCompletedAerodromeMovement(entry) {
+    const category = String(entry.colorClass || '').toUpperCase();
+    if (category === 'OVERFLIGHT' || category === 'TRANSIT') return false;
+    return Boolean((entry.reg || entry.callsign) && (entry.atd || entry.ata));
+}
+
+async function renderDeniedBookings() {
+    const container = document.getElementById('denied-bookings');
+    if (!container) return;
+
+    try {
+        const response = await fetch('/api/flight-bookings');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const bookings = await response.json();
+        if (!Array.isArray(bookings)) throw new Error('Expected an array of flight bookings');
+
+        const denied = bookings.filter(booking => booking.status === 'denied');
+        container.replaceChildren();
+        if (denied.length === 0) {
+            container.style.display = 'none';
+            return;
+        }
+
+        container.style.display = '';
+        const heading = document.createElement('span');
+        heading.style.fontSize = '1.1em';
+        heading.textContent = 'Denied Bookings:';
+        container.appendChild(heading);
+
+        denied.forEach(booking => {
+            const entryBox = document.createElement('div');
+            entryBox.style.margin = '8px 0';
+            entryBox.style.padding = '8px';
+            entryBox.style.background = '#fff0f0';
+            entryBox.style.border = '1px solid #d32f2f';
+
+            const table = document.createElement('table');
+            table.style.width = '100%';
+            table.style.background = '#fff';
+            table.style.marginBottom = '4px';
+            table.style.borderCollapse = 'collapse';
+            table.style.tableLayout = 'fixed';
+
+            const headRow = document.createElement('tr');
+            ['Registration', 'Callsign', 'Type', 'TO', 'ATD', 'ATA', 'FROM', 'Name', 'POB'].forEach(label => {
+                const th = document.createElement('th');
+                th.textContent = label;
+                th.style.background = '#ffeaea';
+                th.style.color = '#b71c1c';
+                th.style.fontWeight = 'bold';
+                th.style.padding = '4px 6px';
+                th.style.border = '1px solid #ffd6d6';
+                th.style.textAlign = 'left';
+                headRow.appendChild(th);
+            });
+            const thead = document.createElement('thead');
+            thead.appendChild(headRow);
+            table.appendChild(thead);
+
+            const row = document.createElement('tr');
+            [booking.aircraftId || booking.reg || '', booking.callsign || '', booking.type || '', booking.to || '', booking.atd || '', booking.ata || '', booking.from || '', booking.name || '', booking.pob || ''].forEach(value => {
+                const td = document.createElement('td');
+                td.textContent = String(value);
+                td.style.padding = '4px 6px';
+                td.style.border = '1px solid #ffd6d6';
+                td.style.background = '#fff';
+                td.style.color = '#b71c1c';
+                row.appendChild(td);
+            });
+            const tbody = document.createElement('tbody');
+            tbody.appendChild(row);
+            table.appendChild(tbody);
+            entryBox.appendChild(table);
+
+            const reapproveButton = document.createElement('button');
+            reapproveButton.textContent = 'Reapprove';
+            reapproveButton.onclick = async () => {
+                if (!booking.id) {
+                    alert('No booking ID');
+                    return;
+                }
+                reapproveButton.disabled = true;
+                reapproveButton.textContent = 'Reapproving...';
+                try {
+                    const response = await fetch(`/api/flight-bookings/${booking.id}/status`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ status: 'approved' })
+                    });
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+                    alert('Booking reapproved!');
+                    await renderDeniedBookings();
+                } catch (error) {
+                    alert(`Request failed: ${error.message}`);
+                } finally {
+                    reapproveButton.disabled = false;
+                    reapproveButton.textContent = 'Reapprove';
+                }
+            };
+            entryBox.appendChild(reapproveButton);
+            container.appendChild(entryBox);
+        });
+    } catch (error) {
+        console.error('Failed to load denied bookings:', error);
+        container.style.display = '';
+        container.textContent = `Unable to load denied bookings: ${error.message}`;
+    }
+}
+
+async function renderMovementsLog() {
     const tbody = document.getElementById('movementsLogBody');
     if (!tbody) return;
-    tbody.innerHTML = '';
-    log.forEach((entry, idx) => {
-        // Replace ICAO code with airport name if possible, and suppress EGSX as required
-        let toDisplay = entry.to || '';
-        let fromDisplay = entry.from || '';
-        // Enhanced lookup: split on '-' and show names if found
-        function lookupName(val) {
-            if (!val) return '';
-            let code = val.trim().toUpperCase();
-            if (code.includes('-')) {
-                return code.split('-').map(part => icaoToName[part] || part).join(' - ');
-            }
-            return icaoToName[code] || code;
-        }
-        // Debug: Show what is being looked up
-        console.log('Entry:', entry);
-        console.log('Looking up TO:', toDisplay, 'Result:', lookupName(toDisplay));
-        console.log('Looking up FROM:', fromDisplay, 'Result:', lookupName(fromDisplay));
+    const renderSequence = ++movementRenderSequence;
+    tbody.replaceChildren();
 
-        // Use enhanced lookup for display
-        toDisplay = lookupName(toDisplay);
-        fromDisplay = lookupName(fromDisplay);
-        // For departures (landaway):
-        // - If 'to' is in the form 'EGTR-XXXX', only show XXXX (the destination code, not airport name)
-        // - If 'to' is just 'EGTR', show blank
-        // - Suppress 'from' field
-        if ((entry.colorClass||'').toUpperCase() === 'LANDAWAY') {
-            // Always suppress EGSX in 'To' for Landaway
-            let toVal = (entry.to||'').replace(/\s+/g, '').toUpperCase();
-            const depAirfield = 'EGSX';
-            if (toVal.startsWith(depAirfield + '-')) {
-                let dest = toVal.substring(depAirfield.length + 1); // everything after 'EGSX-'
-                toDisplay = icaoToName[dest] || dest;
-            } else if (toVal === depAirfield) {
-                toDisplay = '';
-            } else {
-                // If 'to' is just a destination code, show it (as name if available)
-                toDisplay = icaoToName[toVal] || toVal;
-            }
-            fromDisplay = '';
-        } else if ((entry.colorClass||'').toUpperCase() === 'OVERFLIGHT' || (entry.colorClass||'').toUpperCase() === 'TRANSIT') {
-            // For overflight/transit, if 'to' is in the form 'FROM-TO', only show TO in 'To' column
-            let toVal = (entry.to||'').replace(/\s+/g, '').toUpperCase();
-            let fromVal = (entry.from||'').replace(/\s+/g, '').toUpperCase();
-            if (/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(toVal)) {
-                let parts = toVal.split('-');
-                toDisplay = icaoToName[parts[1]] || parts[1];
-            } else {
-                toDisplay = icaoToName[toVal] || toVal;
-            }
-            if (fromVal === 'EGSX') fromDisplay = '';
-            else if (icaoToName[fromDisplay.toUpperCase()]) fromDisplay = icaoToName[fromDisplay.toUpperCase()];
-        } else {
-            // For local/overflight/circuit: if 'to' is 'XXXX-XXXX' and both are the same, show only 'XXXX'
-            let toVal = (entry.to||'').replace(/\s+/g, '').toUpperCase();
-            if (/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(toVal)) {
-                let [a, b] = toVal.split('-');
-                if (a === b) {
-                    toDisplay = a;
-                } else {
-                    if (icaoToName[toDisplay.toUpperCase()]) toDisplay = icaoToName[toDisplay.toUpperCase()];
-                }
-            } else {
-                if (icaoToName[toDisplay.toUpperCase()]) toDisplay = icaoToName[toDisplay.toUpperCase()];
-            }
-            if (icaoToName[fromDisplay.toUpperCase()]) fromDisplay = icaoToName[fromDisplay.toUpperCase()];
-            // Suppress EGSX in 'from' for all rows
-            if ((entry.from||'').toUpperCase() === 'EGSX') fromDisplay = '';
-            // Suppress 'to' for arrivals (from line)
-            if ((entry.colorClass||'').toUpperCase() === 'ARRIVAL') toDisplay = '';
+    try {
+        const response = await fetch('/api/movements');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const movements = await response.json();
+        if (!Array.isArray(movements)) throw new Error('Expected an array of movements');
+        if (renderSequence !== movementRenderSequence) return;
+
+        let entries = movements.filter(isCompletedAerodromeMovement);
+        let typeLookupFailed = false;
+        try {
+            await ensureAircraftTypes(entries);
+        } catch (error) {
+            console.error('Failed to look up aircraft types:', error);
+            typeLookupFailed = true;
         }
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td contenteditable="true" data-key="reg">${(entry.reg || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
-            <td contenteditable="true" data-key="callsign">${(entry.callsign || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
-            <td contenteditable="true" data-key="type">${(entry.type || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
-            <td contenteditable="true" data-key="to">${(toDisplay || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
-            <td contenteditable="true" data-key="atd">${(entry.atd || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
-            <td contenteditable="true" data-key="ata">${(entry.ata || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
-            <td contenteditable="true" data-key="from">${(fromDisplay || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
-            <td contenteditable="true" data-key="name">${(entry.name || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
-            <td contenteditable="true" data-key="pob">${(entry.pob || '').replace(/\s+/g, ' ').replace(/\n/g, '')}</td>
-        `;
-        if (entry.colorClass) tr.classList.add(entry.colorClass);
-        // Save on blur and prevent line breaks
-        tr.querySelectorAll('[contenteditable]').forEach(cell => {
-            cell.addEventListener('blur', function() {
-                let newVal = this.innerText.replace(/\s+/g, ' ').replace(/\n/g, '').trim();
-                let key = this.getAttribute('data-key');
-                entry[key] = newVal;
-                let logAll = JSON.parse(localStorage.getItem('movementsLog') || '[]');
-                logAll[idx][key] = newVal;
-                localStorage.setItem('movementsLog', JSON.stringify(logAll));
-                this.innerText = newVal;
-            });
-            cell.addEventListener('keydown', function(e) {
-                if (e.key === 'Enter') { e.preventDefault(); this.blur(); }
-            });
-            cell.addEventListener('paste', function(e) {
-                e.preventDefault();
-                let text = (e.clipboardData || window.clipboardData).getData('text');
-                text = text.replace(/\s+/g, ' ').replace(/\n/g, '');
-                document.execCommand('insertText', false, text);
-            });
+        if (renderSequence !== movementRenderSequence) return;
+
+        const selectedDate = document.getElementById('log-date').value;
+        if (selectedDate) entries = entries.filter(entry => formatMovementDate(entry.timestamp) === selectedDate);
+
+        if (logFilter) {
+            const filter = logFilter.toUpperCase();
+            const categories = { DEPARTURES: 'LANDAWAY', ARRIVALS: 'ARRIVAL', LOCAL: 'LOCAL', CIRCUITS: 'CIRCUIT' };
+            if (categories[filter]) {
+                entries = entries.filter(entry => String(entry.colorClass || '').toUpperCase() === categories[filter]);
+            }
+        }
+
+        entries.sort((a, b) => {
+            const aValue = a[logSortKey] ?? '';
+            const bValue = b[logSortKey] ?? '';
+            let comparison;
+            if (logSortKey === 'timestamp') {
+                comparison = Number(aValue) - Number(bValue);
+            } else {
+                comparison = String(aValue).toUpperCase().localeCompare(String(bValue).toUpperCase());
+            }
+            return logSortAsc ? comparison : -comparison;
         });
-        tbody.appendChild(tr);
-    });
+
+        entries.forEach(entry => {
+            const route = getMovementRoute(entry);
+            const registration = String(entry.reg || entry.aircraftId || '').trim().toUpperCase();
+            const displayedRegistration = /^G[A-Z0-9]{4}$/.test(registration) ? `G-${registration.slice(1)}` : registration;
+            const registrationKey = normalizeAircraftRegistration(registration);
+            const aircraftType = String(entry.type || '').trim()
+                || aircraftTypeCache.get(registrationKey)
+                || (typeLookupFailed && registrationKey ? 'Lookup failed' : '');
+            const row = document.createElement('tr');
+            const category = String(entry.colorClass || '').toLowerCase();
+            if (['landaway', 'circuit', 'local', 'arrival'].includes(category)) row.classList.add(category);
+
+            [displayedRegistration, entry.callsign, aircraftType, route.destination, formatMovementTime(entry.atd), formatMovementTime(entry.ata), route.origin, entry.name, entry.pob].forEach(value => {
+                const cell = document.createElement('td');
+                cell.textContent = String(value || '').replace(/\s+/g, ' ').trim();
+                row.appendChild(cell);
+            });
+            tbody.appendChild(row);
+        });
+    } catch (error) {
+        if (renderSequence !== movementRenderSequence) return;
+        console.error('Failed to load movements:', error);
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 9;
+        cell.textContent = `Unable to load movements: ${error.message}`;
+        row.appendChild(cell);
+        tbody.appendChild(row);
+    }
 }
-// Sorting
-document.getElementById('sort-reg').onclick = function() {
-    logSortKey = 'reg'; logSortAsc = !logSortAsc; renderMovementsLog();
-};
-document.getElementById('sort-atd').onclick = function() {
-    logSortKey = 'atd'; logSortAsc = !logSortAsc; renderMovementsLog();
-};
-document.getElementById('sort-ata').onclick = function() {
-    logSortKey = 'ata'; logSortAsc = !logSortAsc; renderMovementsLog();
-};
-// Filter
-    document.getElementById('showOnlyDropdown').addEventListener('change', function() {
-        logFilter = this.value.trim();
+
+// Sorting and filters
+['sort-reg', 'sort-atd', 'sort-ata'].forEach(id => {
+    document.getElementById(id).onclick = () => {
+        logSortKey = id === 'sort-reg' ? 'reg' : id === 'sort-atd' ? 'atd' : 'ata';
+        logSortAsc = !logSortAsc;
         renderMovementsLog();
-    });
-// --- AIRLINE LOOKUP ---
+    };
+});
+
+document.getElementById('showOnlyDropdown').addEventListener('change', function() {
+    logFilter = this.value.trim();
+    renderMovementsLog();
+});
+document.getElementById('log-date').addEventListener('change', renderMovementsLog);
+
+renderDeniedBookings();// --- AIRLINE LOOKUP ---
 let trigraphToCallsign = {};
 let callsignToTrigraph = {};
 fetch('assets/data/airlines.dat.txt')
