@@ -848,38 +848,35 @@ document.getElementById('airportInput').addEventListener('input', function() {
 });
 
 // --- REGISTRATION INPUT LOGIC (ALWAYS ACTIVE) ---
-document.getElementById('regInput').addEventListener('input', function() {
-    // Remove spaces and hyphens for lookup
-    let val = this.value.replace(/[-\s]/g, '').toUpperCase();
-    let result = '';
-    if (aircraftDbLoaded === 'error') {
-        result = '<span style="color:red">Aircraft DB failed to load.</span>';
-    } else if (!aircraftDbLoaded) {
-        result = '<em>Loading database...</em>';
-    } else if (val) {
-        // Try all reasonable forms for UK regs
-        let lookup = regToTypeWeight[val]
-            || regToTypeWeight[val.replace(/^G-/, 'G')]
-            || regToTypeWeight['G-' + val.replace(/^G-/, '')]
-            || regToTypeWeight[val.replace(/^G/, 'G-')];
-        // Debug: Log lookup attempts
-        console.log('Lookup input:', this.value, 'normalized:', val);
-        console.log('Tried keys:', val, val.replace(/^G-/, 'G'), 'G-' + val.replace(/^G-/, ''), val.replace(/^G/, 'G-'));
-        if (lookup) {
-            console.log('Lookup found:', lookup);
-        } else {
-            console.log('Lookup not found for:', val);
-        }
-        if (lookup) {
-            const { type, weight } = lookup;
-            result = `<b>ICAO Type:</b> ${type}` + (weight ? ` <span style='color:#888'>(MTOW: ${weight})</span>` : '');
-        } else {
-            result = 'No match found.';
-        }
-    } else {
-        result = '';
+document.getElementById('regInput').addEventListener('input', async function() {
+    const reg = this.value.trim().toUpperCase();
+    const resultEl = document.getElementById('regResult');
+
+    if (!reg) {
+        resultEl.textContent = '';
+        return;
     }
-    document.getElementById('regResult').innerHTML = result;
+
+    try {
+        const response = await fetch(
+            `/api/aircraft-type/${encodeURIComponent(reg)}`
+        );
+
+        if (!response.ok) throw new Error('Lookup failed');
+
+        const data = await response.json();
+
+        if (this.value.trim().toUpperCase() !== reg) return;
+
+        resultEl.textContent = data.type
+            ? `ICAO Type: ${data.type}`
+            : 'No match found.';
+
+    } catch (error) {
+        if (this.value.trim().toUpperCase() === reg) {
+            resultEl.textContent = 'Aircraft lookup unavailable.';
+        }
+    }
 });
 </script>
 </body>
