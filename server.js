@@ -14,6 +14,21 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 
+function writeJsonAtomically(filePath, value) {
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(tempPath, JSON.stringify(value, null, 2), 'utf8');
+    fs.renameSync(tempPath, filePath);
+  } catch (error) {
+    try {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    } catch (cleanupError) {
+      console.error('Failed to clean up temporary persistence file:', cleanupError);
+    }
+    throw error;
+  }
+}
+
 const app = express();
 const PORT = 41000;
 app.use(express.json());
@@ -30,11 +45,7 @@ function loadMovements() {
 }
 
 function saveMovements(movements) {
-  try {
-    fs.writeFileSync(MOVEMENTS_FILE, JSON.stringify(movements, null, 2), 'utf8');
-  } catch (err) {
-    console.error('Failed to save movements:', err);
-  }
+  writeJsonAtomically(MOVEMENTS_FILE, movements);
 }
 
 let movements = loadMovements();
@@ -50,8 +61,14 @@ app.post('/api/movements', (req, res) => {
     ...req.body,
     timestamp: Date.now(),
   };
-  movements.push(entry);
-  saveMovements(movements);
+  const updatedMovements = [...movements, entry];
+  try {
+    saveMovements(updatedMovements);
+  } catch (error) {
+    console.error('Failed to save movement:', error);
+    return res.status(500).json({ error: 'Failed to save movement' });
+  }
+  movements = updatedMovements;
   res.json({ message: 'Movement logged', entry });
 });
 
@@ -71,21 +88,9 @@ function loadOverflights() {
 
 let overflights = loadOverflights();
 
-app.get('/api/overflights', (req, res) => {
-  res.json(overflights);
-});
-
-app.post('/api/overflights', (req, res) => {
-  const body = req.body && typeof req.body === 'object' ? req.body : {};
-  const idempotencyKey = typeof body.idempotencyKey === 'string' ? body.idempotencyKey.trim() : '';
-  if (!idempotencyKey) {
-    return res.status(400).json({ error: 'idempotencyKey is required' });
-  }
-
+function recordOverflight(body, idempotencyKey = body.idempotencyKey) {
   const existing = overflights.find(record => record.idempotencyKey === idempotencyKey);
-  if (existing) {
-    return res.json({ message: 'Overflight already recorded', entry: existing, duplicate: true });
-  }
+  if (existing) return { entry: existing, duplicate: true };
 
   const timestamp = Number.isFinite(Number(body.timestamp)) && body.timestamp !== ''
     ? Number(body.timestamp)
@@ -110,15 +115,32 @@ app.post('/api/overflights', (req, res) => {
     heading: String(body.heading || '').trim(),
   };
   const updatedOverflights = [...overflights, record];
+  writeJsonAtomically(OVERFLIGHTS_FILE, updatedOverflights);
+  overflights = updatedOverflights;
+  return { entry: record, duplicate: false };
+}
+
+app.get('/api/overflights', (req, res) => {
+  res.json(overflights);
+});
+
+app.post('/api/overflights', (req, res) => {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const idempotencyKey = typeof body.idempotencyKey === 'string' ? body.idempotencyKey.trim() : '';
+  if (!idempotencyKey) {
+    return res.status(400).json({ error: 'idempotencyKey is required' });
+  }
+
   try {
-    fs.writeFileSync(OVERFLIGHTS_FILE, JSON.stringify(updatedOverflights, null, 2), 'utf8');
+    const result = recordOverflight(body, idempotencyKey);
+    if (result.duplicate) {
+      return res.json({ message: 'Overflight already recorded', ...result });
+    }
+    return res.status(201).json({ message: 'Overflight recorded', ...result });
   } catch (error) {
     console.error('Failed to save overflight:', error);
     return res.status(500).json({ error: 'Failed to save overflight' });
   }
-
-  overflights = updatedOverflights;
-  return res.status(201).json({ message: 'Overflight recorded', entry: record, duplicate: false });
 });
 
 // Serve static files (flight-board, etc.)
@@ -156,6 +178,57 @@ function saveBookings() {
 
 let bookings = loadBookings();
 let nextId = bookings.length > 0 ? Math.max(...bookings.map(b => b.id || 0)) + 1 : 1;
+
+function findBookingCompletion(bookingId) {
+  const id = String(bookingId);
+  const movement = movements.find(record => String(record.bookingId) === id);
+  if (movement) return { kind: 'movement', record: movement };
+  const overflight = overflights.find(record => record.idempotencyKey === `booking:${id}`);
+  if (overflight) return { kind: 'overflight', record: overflight };
+  return null;
+}
+
+function isBookingCompleted(booking) {
+  return booking.status === 'completed' || findBookingCompletion(booking.id) !== null;
+}
+
+function persistCompletedBooking(bookingId) {
+  const updatedBookings = bookings.map(booking => (
+    String(booking.id) === String(bookingId)
+      ? { ...booking, status: 'completed' }
+      : booking
+  ));
+  writeJsonAtomically(BOOKINGS_FILE, updatedBookings);
+  bookings = updatedBookings;
+  return bookings.find(booking => String(booking.id) === String(bookingId));
+}
+
+function reconcileCompletedBookings() {
+  const completedIds = new Set();
+  movements.forEach(record => {
+    if (record.bookingId !== undefined && record.bookingId !== null) {
+      completedIds.add(String(record.bookingId));
+    }
+  });
+  overflights.forEach(record => {
+    if (typeof record.idempotencyKey === 'string' && record.idempotencyKey.startsWith('booking:')) {
+      completedIds.add(record.idempotencyKey.slice('booking:'.length));
+    }
+  });
+
+  let changed = false;
+  const updatedBookings = bookings.map(booking => {
+    if (completedIds.has(String(booking.id)) && booking.status !== 'completed') {
+      changed = true;
+      return { ...booking, status: 'completed' };
+    }
+    return booking;
+  });
+  if (changed) {
+    writeJsonAtomically(BOOKINGS_FILE, updatedBookings);
+    bookings = updatedBookings;
+  }
+}
 
 // --- Aircraft type lookup (loaded once at startup) ---
 const regToType = {};
@@ -205,10 +278,18 @@ app.post('/api/aircraft-types', (req, res) => {
 app.get('/api/flight-bookings', (req, res) => {
   // Optionally allow ?includeCancelled=true
   const includeCancelled = req.query.includeCancelled === 'true';
+  try {
+    reconcileCompletedBookings();
+  } catch (error) {
+    console.error('Failed to reconcile completed bookings:', error);
+    return res.status(500).json({ error: 'Failed to persist completed booking status' });
+  }
   if (includeCancelled) {
-    res.json(bookings);
+    res.json(bookings.filter(booking => !isBookingCompleted(booking)));
   } else {
-    res.json(bookings.filter(b => b.status !== 'cancelled'));
+    res.json(bookings.filter(booking => (
+      booking.status !== 'cancelled' && !isBookingCompleted(booking)
+    )));
   }
 });
 
@@ -246,6 +327,10 @@ app.post('/api/flight-bookings/:id/status', (req, res) => {
 
   if (!booking) {
     return res.status(404).json({ error: 'Booking not found' });
+  }
+
+  if (isBookingCompleted(booking)) {
+    return res.status(409).json({ error: 'Completed booking cannot be changed' });
   }
 
   if (status !== 'approved' && status !== 'denied' && status !== 'cancelled') {
@@ -289,11 +374,76 @@ app.post('/api/flight-bookings/:id/status', (req, res) => {
   res.json({ message: 'Booking status updated', booking });
 });
 
+app.post('/api/flight-bookings/:id/complete', (req, res) => {
+  const booking = bookings.find(item => String(item.id) === String(req.params.id));
+  if (!booking) {
+    return res.status(404).json({ error: 'Booking not found' });
+  }
+
+  const bookingId = String(booking.id);
+  let completion = findBookingCompletion(bookingId);
+  const duplicate = completion !== null;
+  if (!completion && (booking.status === 'denied' || booking.status === 'cancelled')) {
+    return res.status(409).json({ error: `Cannot complete a ${booking.status} booking` });
+  }
+
+  if (!completion && req.body.category === 'overflight') {
+    try {
+      const result = recordOverflight(req.body, `booking:${bookingId}`);
+      completion = { kind: 'overflight', record: result.entry };
+    } catch (error) {
+      console.error(`Failed to save overflight completion for booking ${bookingId}:`, error);
+      return res.status(500).json({ error: 'Failed to save overflight completion' });
+    }
+  } else if (!completion) {
+    const movement = {
+      ...req.body,
+      bookingId,
+      timestamp: Date.now(),
+    };
+    const updatedMovements = [...movements, movement];
+    try {
+      saveMovements(updatedMovements);
+    } catch (error) {
+      console.error(`Failed to save movement for booking ${bookingId}:`, error);
+      return res.status(500).json({ error: 'Failed to save movement' });
+    }
+    movements = updatedMovements;
+    completion = { kind: 'movement', record: movement };
+  }
+
+  let completedBooking = booking;
+  if (booking.status !== 'completed') {
+    try {
+      completedBooking = persistCompletedBooking(bookingId);
+    } catch (error) {
+      console.error(`Completion record saved but booking ${bookingId} status failed to save:`, error);
+      return res.status(500).json({
+        error: 'Completion record saved, but booking status was not saved; retry completion',
+        recordSaved: true,
+        retryable: true,
+      });
+    }
+  }
+
+  if (wsBroadcast) wsBroadcast();
+  return res.json({
+    message: 'Booking completed',
+    booking: completedBooking,
+    kind: completion.kind,
+    record: completion.record,
+    duplicate,
+  });
+});
+
 // Approve booking
 app.post('/api/flight-bookings/:id/approve', (req, res) => {
   const booking = bookings.find((b) => String(b.id) === String(req.params.id));
   if (!booking) {
     return res.status(404).json({ error: 'Booking not found' });
+  }
+  if (isBookingCompleted(booking)) {
+    return res.status(409).json({ error: 'Completed booking cannot be changed' });
   }
   booking.status = 'approved';
   saveBookings();
@@ -306,6 +456,9 @@ app.post('/api/flight-bookings/:id/reject', (req, res) => {
   const booking = bookings.find((b) => String(b.id) === String(req.params.id));
   if (!booking) {
     return res.status(404).json({ error: 'Booking not found' });
+  }
+  if (isBookingCompleted(booking)) {
+    return res.status(409).json({ error: 'Completed booking cannot be changed' });
   }
   booking.status = 'denied';
   saveBookings();

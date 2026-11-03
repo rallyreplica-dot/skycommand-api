@@ -586,8 +586,8 @@ function loadBookingsFromAPI() {
             const todayStr = `${dd}${mm}${yy}`;
             // Show bookings for today (outbound) and bookings with returnDate === todayStr (return legs)
             bookings.forEach(booking => {
-                // Skip denied or cancelled bookings
-                if (booking.status === 'denied' || booking.status === 'cancelled') return;
+                // Skip denied, cancelled, or completed bookings
+                if (booking.status === 'denied' || booking.status === 'cancelled' || booking.status === 'completed') return;
                 let shown = false;
                 // Outbound leg for today
                 if (booking.date === todayStr) {
@@ -946,6 +946,7 @@ document.querySelectorAll('.droppable').forEach(dropTarget => {
                     ? `booking:${stripElem.dataset.bookingId}`
                     : `strip:${stripElem.id || stripElem.dataset.manualId}`;
                 const overflight = {
+                    category: 'overflight',
                     idempotencyKey,
                     reg: stripElem.dataset.registration || reg,
                     type,
@@ -968,7 +969,11 @@ document.querySelectorAll('.droppable').forEach(dropTarget => {
                     ? `booking:${stripElem.dataset.bookingId}`
                     : `strip:${stripElem.id}`;
 
-                fetch('/api/overflights', {
+                const bookingId = stripElem.dataset.bookingId;
+                const endpoint = bookingId
+                    ? `/api/flight-bookings/${encodeURIComponent(bookingId)}/complete`
+                    : '/api/overflights';
+                fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(overflight)
@@ -989,27 +994,39 @@ document.querySelectorAll('.droppable').forEach(dropTarget => {
                 });
                 return;
             }
-            // Save to localStorage
             const logEntry = { reg, type, to, atd, ata, from, name, pob, colorClass, timestamp: Date.now() };
-            let log = [];
-            try { log = JSON.parse(localStorage.getItem('movementsLog') || '[]'); } catch {}
-            log.push(logEntry);
-            localStorage.setItem('movementsLog', JSON.stringify(log));
-            // Send to backend movements log
-            fetch('http://127.0.0.1:41000/api/movements', {
+            if (stripElem.dataset.movementCompletionPending === 'true') return;
+            stripElem.dataset.movementCompletionPending = 'true';
+            const bookingId = stripElem.dataset.bookingId;
+            const endpoint = bookingId
+                ? `/api/flight-bookings/${encodeURIComponent(bookingId)}/complete`
+                : 'http://127.0.0.1:41000/api/movements';
+            fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(logEntry)
             })
-            .then(res => res.json())
-            .then(data => {
-                console.log('[FlightBoard] Sent to backend movements log:', data);
+            .then(async response => {
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+                return data;
             })
-            .catch(err => {
-                console.error('[FlightBoard] Failed to send to backend movements log:', err);
+            .then(result => {
+                try {
+                    const log = JSON.parse(localStorage.getItem('movementsLog') || '[]');
+                    log.push(logEntry);
+                    localStorage.setItem('movementsLog', JSON.stringify(log));
+                } catch (error) {
+                    console.error('[FlightBoard] Movement saved but local history could not be updated:', error);
+                }
+                console.log('[FlightBoard] Movement completion confirmed by server:', result);
+                stripElem.remove();
+            })
+            .catch(error => {
+                delete stripElem.dataset.movementCompletionPending;
+                console.error('[FlightBoard] Movement completion was not confirmed:', error);
+                alert(`Completion was not confirmed. You can retry safely. ${error.message}`);
             });
-            // Remove strip from DOM
-            stripElem.remove();
             return;
         }
         // Default: move strip as before
