@@ -411,6 +411,27 @@ function getBookingLegs(booking) {
     : ['outbound'];
 }
 
+function getCancelledBookingLegs(booking) {
+  const legs = getBookingLegs(booking);
+  if (booking.status === 'cancelled') return legs;
+  const stored = Array.isArray(booking._skycommandCancelledLegs)
+    ? booking._skycommandCancelledLegs
+    : [];
+  return legs.filter(leg => stored.includes(leg));
+}
+
+function isBookingLegCancelled(booking, leg) {
+  return getCancelledBookingLegs(booking).includes(leg);
+}
+
+function isBookingLegDeparted(booking, leg) {
+  const state = (booking._skycommandStripStates || {})[leg] || {};
+  const actualDeparture = leg === 'return'
+    ? state.atd || booking.returnATD
+    : state.atd || booking.atd;
+  return Boolean(String(actualDeparture || '').trim());
+}
+
 const BOOKING_STRIP_LANES = new Set([
   'booked-out-top',
   'taxying-in',
@@ -519,7 +540,11 @@ function ensureBookingStripStates() {
 
 function exposeBooking(booking) {
   const { _skycommandStripStates, ...publicBooking } = booking;
-  return publicBooking;
+  delete publicBooking._skycommandCancelledLegs;
+  return {
+    ...publicBooking,
+    cancelledLegs: getCancelledBookingLegs(booking),
+  };
 }
 
 function normalizeBookingStripState(booking, leg, body, current) {
@@ -561,9 +586,12 @@ function findBookingCompletion(bookingId, leg = 'outbound') {
 
 function getCompletedBookingLegs(booking) {
   const legs = getBookingLegs(booking);
-  const completedLegs = legs.filter(leg => findBookingCompletion(booking.id, leg));
+  const cancelledLegs = new Set(getCancelledBookingLegs(booking));
+  const completedLegs = legs.filter(leg => (
+    !cancelledLegs.has(leg) && findBookingCompletion(booking.id, leg)
+  ));
   return booking.status === 'completed' && completedLegs.length === 0
-    ? legs
+    ? legs.filter(leg => !cancelledLegs.has(leg))
     : completedLegs;
 }
 
@@ -572,7 +600,11 @@ function hasCompletedBookingLeg(booking) {
 }
 
 function isBookingCompleted(booking) {
-  return getCompletedBookingLegs(booking).length === getBookingLegs(booking).length;
+  const applicableLegs = getBookingLegs(booking).filter(
+    leg => !isBookingLegCancelled(booking, leg)
+  );
+  return applicableLegs.length > 0
+    && applicableLegs.every(leg => getCompletedBookingLegs(booking).includes(leg));
 }
 
 function persistCompletedBooking(bookingId) {
@@ -598,6 +630,124 @@ function reconcileCompletedBookings() {
   if (changed) {
     saveBookings(updatedBookings);
   }
+}
+
+function cancelBookingLeg(bookingId, requestedLeg) {
+  const booking = bookings.find(item => String(item.id) === String(bookingId));
+  if (!booking) {
+    return { status: 404, body: { error: 'Booking not found' } };
+  }
+
+  const journeyLeg = String(requestedLeg || booking.journeyLeg || 'outbound')
+    .trim()
+    .toLowerCase();
+  const bookingLegs = getBookingLegs(booking);
+  const leg = bookingLegs.includes(journeyLeg)
+    ? journeyLeg
+    : bookingLegs.length === 1 && booking.journeyLeg === journeyLeg
+      ? 'outbound'
+      : null;
+  if (!leg) {
+    return { status: 400, body: { error: 'Invalid booking leg' } };
+  }
+  if (!isBookingLegCancelled(booking, leg)
+      && (getCompletedBookingLegs(booking).includes(leg)
+        || isBookingLegDeparted(booking, leg))) {
+    return {
+      status: 409,
+      body: { error: 'A departed or completed booking leg cannot be cancelled' },
+    };
+  }
+
+  const targets = [{ booking, leg }];
+  if (journeyLeg === 'outbound') {
+    if (bookingLegs.includes('return')) {
+      targets.push({ booking, leg: 'return' });
+    } else if (booking.journeyId) {
+      const linkedReturn = bookings.find(item => (
+        String(item.journeyId || '') === String(booking.journeyId)
+        && String(item.journeyLeg || '').toLowerCase() === 'return'
+        && String(item.id) !== String(booking.id)
+      ));
+      if (linkedReturn) {
+        targets.push({
+          booking: linkedReturn,
+          leg: getBookingLegs(linkedReturn).includes('return') ? 'return' : 'outbound',
+        });
+      }
+    }
+  }
+
+  const cancelledLegsByBooking = new Map();
+  let updatedBookings = bookings;
+  for (const target of targets) {
+    const currentBooking = updatedBookings.find(
+      item => String(item.id) === String(target.booking.id)
+    );
+    if (!currentBooking || isBookingLegCancelled(currentBooking, target.leg)) continue;
+    if (getCompletedBookingLegs(currentBooking).includes(target.leg)
+        || isBookingLegDeparted(currentBooking, target.leg)) {
+      continue;
+    }
+
+    const cancelledLegs = new Set(getCancelledBookingLegs(currentBooking));
+    cancelledLegs.add(target.leg);
+    const allLegsCancelled = getBookingLegs(currentBooking).every(
+      currentLeg => cancelledLegs.has(currentLeg)
+    );
+    const updatedBooking = {
+      ...currentBooking,
+      _skycommandCancelledLegs: [...cancelledLegs],
+      ...(getBookingLegs(currentBooking).length === 1 || allLegsCancelled
+        ? { status: 'cancelled' }
+        : {}),
+    };
+    updatedBookings = updatedBookings.map(item => (
+      String(item.id) === String(currentBooking.id) ? updatedBooking : item
+    ));
+    const changedLegs = cancelledLegsByBooking.get(String(currentBooking.id)) || [];
+    changedLegs.push(target.leg);
+    cancelledLegsByBooking.set(String(currentBooking.id), changedLegs);
+  }
+
+  const duplicate = cancelledLegsByBooking.size === 0;
+  if (!duplicate) {
+    try {
+      saveBookings(updatedBookings);
+    } catch (error) {
+      console.error(`Failed to cancel booking ${bookingId} (${journeyLeg}):`, error);
+      return { status: 500, body: { error: 'Failed to save booking cancellation' } };
+    }
+    if (wsBroadcast) wsBroadcast();
+  }
+
+  const cancelledBookingsById = new Map();
+  targets.forEach(target => {
+    const id = String(target.booking.id);
+    const currentBooking = bookings.find(item => String(item.id) === id);
+    if (!currentBooking || !isBookingLegCancelled(currentBooking, target.leg)) return;
+    const response = cancelledBookingsById.get(id) || {
+      booking: exposeBooking(currentBooking),
+      journeyLeg: currentBooking.journeyLeg || target.leg,
+      legs: new Set(),
+    };
+    response.legs.add(target.leg);
+    cancelledBookingsById.set(id, response);
+  });
+  const cancelledBookings = [...cancelledBookingsById.values()].map(item => ({
+    ...item,
+    legs: [...item.legs],
+  }));
+
+  return {
+    status: 200,
+    body: {
+      message: duplicate ? 'Booking was already cancelled' : 'Booking cancelled',
+      booking: exposeBooking(bookings.find(item => String(item.id) === String(booking.id))),
+      cancelledBookings,
+      duplicate,
+    },
+  };
 }
 
 // --- Aircraft type lookup (loaded once at startup) ---
@@ -656,9 +806,12 @@ app.get('/api/flight-bookings', (req, res) => {
   }
   const bookingsWithCompletedLegs = bookings.map(booking => {
     const completedLegs = getCompletedBookingLegs(booking);
+    const applicableLegs = getBookingLegs(booking).filter(
+      leg => !isBookingLegCancelled(booking, leg)
+    );
     return {
       ...exposeBooking(booking),
-      status: booking.status === 'completed' && completedLegs.length < getBookingLegs(booking).length
+      status: booking.status === 'completed' && completedLegs.length < applicableLegs.length
         ? 'approved'
         : booking.status,
       completedLegs,
@@ -668,7 +821,8 @@ app.get('/api/flight-bookings', (req, res) => {
     res.json(bookingsWithCompletedLegs.filter(booking => !isBookingCompleted(booking)));
   } else {
     res.json(bookingsWithCompletedLegs.filter(booking => (
-      booking.status !== 'cancelled' && !isBookingCompleted(booking)
+      booking.status !== 'cancelled'
+      && !isBookingCompleted(bookings.find(item => String(item.id) === String(booking.id)))
     )));
   }
 });
@@ -700,6 +854,7 @@ app.put('/api/flight-bookings/:id/strip-state/:leg', (req, res) => {
     return res.status(400).json({ error: 'Invalid booking leg' });
   }
   if (booking.status === 'denied' || booking.status === 'cancelled'
+      || isBookingLegCancelled(booking, leg)
       || isBookingCompleted(booking) || findBookingCompletion(bookingId, leg)) {
     return res.status(409).json({ error: 'Completed or inactive booking leg cannot be changed' });
   }
@@ -743,6 +898,22 @@ app.put('/api/flight-bookings/:id/strip-state/:leg', (req, res) => {
 // POST a new booking — accepts all fields from Pilot360 or manual entry
 app.post('/api/flight-bookings', async (req, res) => {
 
+  const journeyId = typeof req.body.journeyId === 'string'
+    ? req.body.journeyId.trim()
+    : '';
+  const journeyLeg = typeof req.body.journeyLeg === 'string'
+    ? req.body.journeyLeg.trim().toLowerCase()
+    : '';
+  if (journeyId && !['outbound', 'return'].includes(journeyLeg)) {
+    return res.status(400).json({ error: 'A linked booking requires a valid journey leg' });
+  }
+  if (journeyId && bookings.some(item => (
+    String(item.journeyId || '') === journeyId
+    && String(item.journeyLeg || '').toLowerCase() === journeyLeg
+  ))) {
+    return res.status(409).json({ error: 'This journey leg has already been booked' });
+  }
+
   // Accept DDMMYY directly from client, fallback to today if missing or invalid
   let date = req.body.date;
   if (!date || typeof date !== 'string' || !/^\d{6}$/.test(date)) {
@@ -758,6 +929,7 @@ app.post('/api/flight-bookings', async (req, res) => {
     ...req.body,
     id: nextId,
     date,
+    ...(journeyId ? { journeyId, journeyLeg } : {}),
     status: req.body.status === 'completed' ? 'pending' : (req.body.status || 'pending'),
   };
   booking._skycommandStripStates = createBookingStripStates(booking);
@@ -782,49 +954,25 @@ app.post('/api/flight-bookings/:id/status', (req, res) => {
     return res.status(404).json({ error: 'Booking not found' });
   }
 
-  if (hasCompletedBookingLeg(booking)) {
-    return res.status(409).json({ error: 'Completed booking cannot be changed' });
-  }
-
   if (status !== 'approved' && status !== 'denied' && status !== 'cancelled') {
     return res.status(400).json({ error: 'Invalid status' });
+  }
+
+  if (status === 'cancelled') {
+    const result = cancelBookingLeg(
+      booking.id,
+      req.body.journeyLeg || booking.journeyLeg || 'outbound',
+    );
+    return res.status(result.status).json(result.body);
+  }
+  if (hasCompletedBookingLeg(booking)) {
+    return res.status(409).json({ error: 'Completed booking cannot be changed' });
   }
 
   let updatedBookings = bookings.map(item => (
     String(item.id) === String(booking.id) ? { ...item, status } : item
   ));
   console.log(`[DEBUG] Booking ${booking.id} status set to ${status}`);
-
-  // If cancelling a landaway, also cancel the return flight (match on aircraft, from/to swap, and date)
-  if (status === 'cancelled' && booking.type && booking.type.toLowerCase() === 'landaway') {
-    const returnFlight = updatedBookings.find(b => {
-      const match = (
-        b.id !== booking.id &&
-        b.status !== 'cancelled' &&
-        b.type && b.type.toLowerCase() === 'landaway' &&
-        b.aircraft === booking.aircraft &&
-        b.from === booking.to &&
-        b.to === booking.from &&
-        b.date === booking.date &&
-        (
-          (b.etd && booking.etd && b.etd > booking.etd) ||
-          (b.id > booking.id)
-        )
-      );
-      if (match) {
-        console.log(`[DEBUG] Return flight candidate: id=${b.id}, aircraft=${b.aircraft}, from=${b.from}, to=${b.to}, date=${b.date}, etd=${b.etd}`);
-      }
-      return match;
-    });
-    if (returnFlight) {
-      updatedBookings = updatedBookings.map(item => (
-        String(item.id) === String(returnFlight.id) ? { ...item, status: 'cancelled' } : item
-      ));
-      console.log(`[DEBUG] Return flight ${returnFlight.id} also set to cancelled.`);
-    } else {
-      console.log('[DEBUG] No matching return flight found for cancellation.');
-    }
-  }
 
   try {
     saveBookings(updatedBookings);
@@ -837,6 +985,11 @@ app.post('/api/flight-bookings/:id/status', (req, res) => {
     message: 'Booking status updated',
     booking: exposeBooking(bookings.find(item => String(item.id) === String(booking.id))),
   });
+});
+
+app.post('/api/flight-bookings/:id/cancel', (req, res) => {
+  const result = cancelBookingLeg(req.params.id, req.body.journeyLeg);
+  return res.status(result.status).json(result.body);
 });
 
 app.post('/api/flight-bookings/:id/complete', (req, res) => {
@@ -853,6 +1006,9 @@ app.post('/api/flight-bookings/:id/complete', (req, res) => {
 
   let completion = findBookingCompletion(bookingId, leg);
   const duplicate = completion !== null;
+  if (!completion && isBookingLegCancelled(booking, leg)) {
+    return res.status(409).json({ error: 'Cannot complete a cancelled booking leg' });
+  }
   if (!completion && (booking.status === 'denied' || booking.status === 'cancelled')) {
     return res.status(409).json({ error: `Cannot complete a ${booking.status} booking` });
   }
@@ -885,7 +1041,9 @@ app.post('/api/flight-bookings/:id/complete', (req, res) => {
 
   let completedBooking = booking;
   if (getBookingLegs(booking).every(bookingLeg => (
-    bookingLeg === leg || findBookingCompletion(bookingId, bookingLeg)
+    isBookingLegCancelled(booking, bookingLeg)
+    || bookingLeg === leg
+    || findBookingCompletion(bookingId, bookingLeg)
   ))) {
     try {
       completedBooking = persistCompletedBooking(bookingId);

@@ -313,10 +313,15 @@
         bookings.forEach(booking => {
             if (booking.status === 'denied' || booking.status === 'cancelled' || booking.status === 'completed') return;
             const completedLegs = new Set(Array.isArray(booking.completedLegs) ? booking.completedLegs : []);
-            if (booking.date === todayStr && !completedLegs.has('outbound')) {
+            const cancelledLegs = new Set(Array.isArray(booking.cancelledLegs) ? booking.cancelledLegs : []);
+            if (booking.date === todayStr
+                && !completedLegs.has('outbound')
+                && !cancelledLegs.has('outbound')) {
                 desired.set(bookingLegKey(booking.id, 'outbound'), { booking, leg: 'outbound' });
             }
-            if (booking.returnDate === todayStr && !completedLegs.has('return')) {
+            if (booking.returnDate === todayStr
+                && !completedLegs.has('return')
+                && !cancelledLegs.has('return')) {
                 desired.set(bookingLegKey(booking.id, 'return'), { booking, leg: 'return' });
             }
         });
