@@ -600,10 +600,9 @@ function loadBookingsFromAPI() {
             bookings.forEach(booking => {
                 // Skip denied, cancelled, or completed bookings
                 if (booking.status === 'denied' || booking.status === 'cancelled' || booking.status === 'completed') return;
-                let shown = false;
+                const completedLegs = new Set(Array.isArray(booking.completedLegs) ? booking.completedLegs : []);
                 // Outbound leg for today
-                if (booking.date === todayStr) {
-                    shown = true;
+                if (booking.date === todayStr && !completedLegs.has('outbound')) {
                     console.log('[DEBUG] Rendering outbound booking:', booking);
                     let reg = booking.aircraft || booking.reg || '';
                     let posn = booking.posn || '';
@@ -618,7 +617,7 @@ function loadBookingsFromAPI() {
                     let flightType = booking.type || '';
                     let status = booking.status || 'pending';
                     let bookingId = booking.id;
-                    let {strip, laneSelector} = createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta, callsign, flightType, status, bookingId});
+                    let {strip, laneSelector} = createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta, callsign, flightType, status, bookingId, bookingLeg: 'outbound'});
                     let lane = document.querySelector(laneSelector);
                     if (!lane) lane = document.querySelector('.lane');
                     let container = lane.querySelector('#flight-strip-container');
@@ -639,9 +638,7 @@ function loadBookingsFromAPI() {
                     }
                 }
                 // Return leg for today (if present and not already shown)
-                if (booking.returnDate === todayStr) {
-                    // Avoid double-showing if outbound and return are same day
-                    if (!(shown && booking.date === booking.returnDate)) {
+                if (booking.returnDate === todayStr && !completedLegs.has('return')) {
                         console.log('[DEBUG] Rendering return leg for booking:', booking);
                         let reg = booking.aircraft || booking.reg || '';
                         let posn = booking.posn || '';
@@ -657,8 +654,8 @@ function loadBookingsFromAPI() {
                         let callsign = booking.callsign || '';
                         let flightType = booking.type || '';
                         let status = booking.status || 'pending';
-                        let bookingId = booking.id ? booking.id + '-return' : null;
-                        let {strip, laneSelector} = createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta, callsign, flightType, status, bookingId});
+                        let bookingId = booking.id;
+                        let {strip, laneSelector} = createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta, callsign, flightType, status, bookingId, bookingLeg: 'return'});
                         // For return, use arrival lane
                         laneSelector = '.lane-booked-in';
                         let lane = document.querySelector(laneSelector);
@@ -672,7 +669,6 @@ function loadBookingsFromAPI() {
                                 lane.insertBefore(container, label.nextSibling);
                             } else {
                                 lane.appendChild(container);
-                            }
                         }
                         container.appendChild(strip);
                         if (strip._shouldPulse) {
@@ -940,8 +936,9 @@ document.querySelectorAll('.droppable').forEach(dropTarget => {
                 const routeTo = stripElem.dataset.routeTo || (routeParts.length > 1 ? routeParts[routeParts.length - 1] : to);
                 const onTime = stripElem.querySelector('.quarter.bottom-left input')?.value || '';
                 const offTime = stripElem.querySelector('.quarter.bottom-right input')?.value || '';
+                const bookingLeg = stripElem.dataset.bookingLeg || 'outbound';
                 const idempotencyKey = stripElem.dataset.bookingId
-                    ? `booking:${stripElem.dataset.bookingId}`
+                    ? `booking:${stripElem.dataset.bookingId}:${bookingLeg}`
                     : `strip:${stripElem.id || stripElem.dataset.manualId}`;
                 const overflight = {
                     category: 'overflight',
@@ -964,12 +961,12 @@ document.querySelectorAll('.droppable').forEach(dropTarget => {
                 if (!stripElem.id) stripElem.id = `flightStrip-${Math.random().toString(36).slice(2, 11)}`;
                 stripElem.dataset.overflightCompletionPending = 'true';
                 overflight.idempotencyKey = stripElem.dataset.bookingId
-                    ? `booking:${stripElem.dataset.bookingId}`
+                    ? `booking:${stripElem.dataset.bookingId}:${bookingLeg}`
                     : `strip:${stripElem.id}`;
 
                 const bookingId = stripElem.dataset.bookingId;
                 const endpoint = bookingId
-                    ? `/api/flight-bookings/${encodeURIComponent(bookingId)}/complete`
+                    ? `/api/flight-bookings/${encodeURIComponent(bookingId)}/complete?leg=${encodeURIComponent(bookingLeg)}`
                     : '/api/overflights';
                 fetch(endpoint, {
                     method: 'POST',
@@ -1002,8 +999,10 @@ document.querySelectorAll('.droppable').forEach(dropTarget => {
             if (stripElem.dataset.movementCompletionPending === 'true') return;
             stripElem.dataset.movementCompletionPending = 'true';
             const bookingId = stripElem.dataset.bookingId;
+            const bookingLeg = stripElem.dataset.bookingLeg || 'outbound';
+            if (bookingId) logEntry.bookingLeg = bookingLeg;
             const endpoint = bookingId
-                ? `/api/flight-bookings/${encodeURIComponent(bookingId)}/complete`
+                ? `/api/flight-bookings/${encodeURIComponent(bookingId)}/complete?leg=${encodeURIComponent(bookingLeg)}`
                 : '/api/movements';
             fetch(endpoint, {
                 method: 'POST',
@@ -1067,7 +1066,7 @@ document.querySelectorAll('.droppable').forEach(dropTarget => {
 
 // Custom submit logic for new strips
 // Accepts an optional status argument
-function createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta, callsign, flightType, status, bookingId}) {
+function createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta, callsign, flightType, status, bookingId, bookingLeg = 'outbound'}) {
     const BASE = 'EGSX';
     let category = '';
     const strip = document.createElement('div');
@@ -1157,8 +1156,9 @@ function createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta,
     }
     strip.draggable = true;
     // Set bookingId as data attribute if provided
-    if (bookingId) {
-        strip.dataset.bookingId = bookingId;
+    if (bookingId !== undefined && bookingId !== null) {
+        strip.dataset.bookingId = String(bookingId);
+        strip.dataset.bookingLeg = bookingLeg;
     }
     // Only assign data-manual and data-manual-id for true manual strips (overflight/green, no bookingId)
     if (!bookingId && category === 'overflight') {
@@ -1369,49 +1369,57 @@ function createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta,
         // Approve handler
         approveBtn.addEventListener('click', function(e) {
             e.stopPropagation();
-            strip.classList.remove('pending-pulse');
             // Send POST to backend to update status to 'approved'
             if (strip.dataset.bookingId) {
-                fetch(`/api/flight-bookings/${strip.dataset.bookingId}/status`, {
+                fetch(`/api/flight-bookings/${encodeURIComponent(strip.dataset.bookingId)}/status`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({ status: 'approved' })
                 })
-                .then(response => response.json())
+                .then(async response => {
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+                    return data;
+                })
                 .then(data => {
                     actionDiv.remove();
+                    strip.classList.remove('pending-pulse');
                     strip.classList.add('approved');
                 })
                 .catch(err => {
-                    alert('Failed to approve booking.');
+                    alert(`Failed to approve booking: ${err.message}`);
                 });
             } else {
                 actionDiv.remove();
+                strip.classList.remove('pending-pulse');
                 strip.classList.add('approved');
             }
         });
         // Deny handler
         denyBtn.addEventListener('click', function(e) {
             e.stopPropagation();
-            strip.classList.remove('pending-pulse');
             // Send POST to backend to update status to 'denied'
             if (strip.dataset.bookingId) {
-                fetch(`/api/flight-bookings/${strip.dataset.bookingId}/status`, {
+                fetch(`/api/flight-bookings/${encodeURIComponent(strip.dataset.bookingId)}/status`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({ status: 'denied' })
                 })
-                .then(response => response.json())
+                .then(async response => {
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+                    return data;
+                })
                 .then(data => {
                     strip.remove();
                     alert('Booking denied and removed.');
                 })
                 .catch(err => {
-                    alert('Failed to deny booking.');
+                    alert(`Failed to deny booking: ${err.message}`);
                 });
             } else {
                 strip.remove();

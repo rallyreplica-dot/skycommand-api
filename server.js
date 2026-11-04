@@ -13,6 +13,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const DATA_DIR = process.env.SKYCOMMAND_DATA_DIR || __dirname;
 
 function writeJsonAtomically(filePath, value) {
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
@@ -30,10 +31,10 @@ function writeJsonAtomically(filePath, value) {
 }
 
 const app = express();
-const PORT = 41000;
+const PORT = Number(process.env.PORT) || 41000;
 app.use(express.json());
 // --- Movements Log Persistence ---
-const MOVEMENTS_FILE = path.join(__dirname, 'movements-log.json');
+const MOVEMENTS_FILE = path.join(DATA_DIR, 'movements-log.json');
 
 function loadMovements() {
   try {
@@ -72,7 +73,7 @@ app.post('/api/movements', (req, res) => {
   res.json({ message: 'Movement logged', entry });
 });
 
-const OVERFLIGHTS_FILE = path.join(__dirname, 'overflights.json');
+const OVERFLIGHTS_FILE = path.join(DATA_DIR, 'overflights.json');
 
 function loadOverflights() {
   try {
@@ -143,7 +144,7 @@ app.post('/api/overflights', (req, res) => {
   }
 });
 
-const MANUAL_STRIPS_FILE = path.join(__dirname, 'manual-strips.json');
+const MANUAL_STRIPS_FILE = path.join(DATA_DIR, 'manual-strips.json');
 const MANUAL_STRIP_LANES = new Set([
   'booked-out-top',
   'taxying-in',
@@ -385,7 +386,7 @@ app.use(cors());
 app.use(express.json());
 
 // --- Persistence ---
-const BOOKINGS_FILE = path.join(__dirname, 'bookings-data.json');
+const BOOKINGS_FILE = path.join(DATA_DIR, 'bookings-data.json');
 
 function loadBookings() {
   try {
@@ -396,28 +397,49 @@ function loadBookings() {
   }
 }
 
-function saveBookings() {
-  try {
-    fs.writeFileSync(BOOKINGS_FILE, JSON.stringify(bookings, null, 2), 'utf8');
-  } catch (err) {
-    console.error('Failed to save bookings:', err);
-  }
+function saveBookings(updatedBookings = bookings) {
+  writeJsonAtomically(BOOKINGS_FILE, updatedBookings);
+  bookings = updatedBookings;
 }
 
 let bookings = loadBookings();
 let nextId = bookings.length > 0 ? Math.max(...bookings.map(b => b.id || 0)) + 1 : 1;
 
-function findBookingCompletion(bookingId) {
+function getBookingLegs(booking) {
+  return booking.returnDate && String(booking.returnDate).trim()
+    ? ['outbound', 'return']
+    : ['outbound'];
+}
+
+function findBookingCompletion(bookingId, leg = 'outbound') {
   const id = String(bookingId);
-  const movement = movements.find(record => String(record.bookingId) === id);
+  const movement = movements.find(record => (
+    String(record.bookingId) === id
+    && (record.bookingLeg || 'outbound') === leg
+  ));
   if (movement) return { kind: 'movement', record: movement };
-  const overflight = overflights.find(record => record.idempotencyKey === `booking:${id}`);
+  const overflight = overflights.find(record => (
+    record.idempotencyKey === `booking:${id}:${leg}`
+    || (leg === 'outbound' && record.idempotencyKey === `booking:${id}`)
+  ));
   if (overflight) return { kind: 'overflight', record: overflight };
   return null;
 }
 
+function getCompletedBookingLegs(booking) {
+  const legs = getBookingLegs(booking);
+  const completedLegs = legs.filter(leg => findBookingCompletion(booking.id, leg));
+  return booking.status === 'completed' && completedLegs.length === 0
+    ? legs
+    : completedLegs;
+}
+
+function hasCompletedBookingLeg(booking) {
+  return getCompletedBookingLegs(booking).length > 0;
+}
+
 function isBookingCompleted(booking) {
-  return booking.status === 'completed' || findBookingCompletion(booking.id) !== null;
+  return getCompletedBookingLegs(booking).length === getBookingLegs(booking).length;
 }
 
 function persistCompletedBooking(bookingId) {
@@ -432,29 +454,16 @@ function persistCompletedBooking(bookingId) {
 }
 
 function reconcileCompletedBookings() {
-  const completedIds = new Set();
-  movements.forEach(record => {
-    if (record.bookingId !== undefined && record.bookingId !== null) {
-      completedIds.add(String(record.bookingId));
-    }
-  });
-  overflights.forEach(record => {
-    if (typeof record.idempotencyKey === 'string' && record.idempotencyKey.startsWith('booking:')) {
-      completedIds.add(record.idempotencyKey.slice('booking:'.length));
-    }
-  });
-
   let changed = false;
   const updatedBookings = bookings.map(booking => {
-    if (completedIds.has(String(booking.id)) && booking.status !== 'completed') {
+    if (isBookingCompleted(booking) && booking.status !== 'completed') {
       changed = true;
       return { ...booking, status: 'completed' };
     }
     return booking;
   });
   if (changed) {
-    writeJsonAtomically(BOOKINGS_FILE, updatedBookings);
-    bookings = updatedBookings;
+    saveBookings(updatedBookings);
   }
 }
 
@@ -512,10 +521,20 @@ app.get('/api/flight-bookings', (req, res) => {
     console.error('Failed to reconcile completed bookings:', error);
     return res.status(500).json({ error: 'Failed to persist completed booking status' });
   }
+  const bookingsWithCompletedLegs = bookings.map(booking => {
+    const completedLegs = getCompletedBookingLegs(booking);
+    return {
+      ...booking,
+      status: booking.status === 'completed' && completedLegs.length < getBookingLegs(booking).length
+        ? 'approved'
+        : booking.status,
+      completedLegs,
+    };
+  });
   if (includeCancelled) {
-    res.json(bookings.filter(booking => !isBookingCompleted(booking)));
+    res.json(bookingsWithCompletedLegs.filter(booking => !isBookingCompleted(booking)));
   } else {
-    res.json(bookings.filter(booking => (
+    res.json(bookingsWithCompletedLegs.filter(booking => (
       booking.status !== 'cancelled' && !isBookingCompleted(booking)
     )));
   }
@@ -536,14 +555,19 @@ app.post('/api/flight-bookings', async (req, res) => {
   }
 
   const booking = {
-    id: nextId++,
     ...req.body,
+    id: nextId,
     date,
-    status: req.body.status || 'pending',
+    status: req.body.status === 'completed' ? 'pending' : (req.body.status || 'pending'),
   };
 
-  bookings.push(booking);
-  saveBookings();
+  try {
+    saveBookings(bookings.concat(booking));
+  } catch (error) {
+    console.error('Failed to save booking:', error);
+    return res.status(500).json({ error: 'Failed to save booking' });
+  }
+  nextId += 1;
   if (wsBroadcast) wsBroadcast();
   res.json(booking);
 });
@@ -557,7 +581,7 @@ app.post('/api/flight-bookings/:id/status', (req, res) => {
     return res.status(404).json({ error: 'Booking not found' });
   }
 
-  if (isBookingCompleted(booking)) {
+  if (hasCompletedBookingLeg(booking)) {
     return res.status(409).json({ error: 'Completed booking cannot be changed' });
   }
 
@@ -565,12 +589,14 @@ app.post('/api/flight-bookings/:id/status', (req, res) => {
     return res.status(400).json({ error: 'Invalid status' });
   }
 
-  booking.status = status;
+  let updatedBookings = bookings.map(item => (
+    String(item.id) === String(booking.id) ? { ...item, status } : item
+  ));
   console.log(`[DEBUG] Booking ${booking.id} status set to ${status}`);
 
   // If cancelling a landaway, also cancel the return flight (match on aircraft, from/to swap, and date)
   if (status === 'cancelled' && booking.type && booking.type.toLowerCase() === 'landaway') {
-    const returnFlight = bookings.find(b => {
+    const returnFlight = updatedBookings.find(b => {
       const match = (
         b.id !== booking.id &&
         b.status !== 'cancelled' &&
@@ -590,16 +616,26 @@ app.post('/api/flight-bookings/:id/status', (req, res) => {
       return match;
     });
     if (returnFlight) {
-      returnFlight.status = 'cancelled';
+      updatedBookings = updatedBookings.map(item => (
+        String(item.id) === String(returnFlight.id) ? { ...item, status: 'cancelled' } : item
+      ));
       console.log(`[DEBUG] Return flight ${returnFlight.id} also set to cancelled.`);
     } else {
       console.log('[DEBUG] No matching return flight found for cancellation.');
     }
   }
 
-  saveBookings();
+  try {
+    saveBookings(updatedBookings);
+  } catch (error) {
+    console.error(`Failed to save booking status for ${booking.id}:`, error);
+    return res.status(500).json({ error: 'Failed to save booking status' });
+  }
   if (wsBroadcast) wsBroadcast();
-  res.json({ message: 'Booking status updated', booking });
+  res.json({
+    message: 'Booking status updated',
+    booking: bookings.find(item => String(item.id) === String(booking.id)),
+  });
 });
 
 app.post('/api/flight-bookings/:id/complete', (req, res) => {
@@ -609,7 +645,12 @@ app.post('/api/flight-bookings/:id/complete', (req, res) => {
   }
 
   const bookingId = String(booking.id);
-  let completion = findBookingCompletion(bookingId);
+  const leg = String(req.query.leg || req.body.bookingLeg || 'outbound').toLowerCase();
+  if (!getBookingLegs(booking).includes(leg)) {
+    return res.status(400).json({ error: 'Invalid booking leg' });
+  }
+
+  let completion = findBookingCompletion(bookingId, leg);
   const duplicate = completion !== null;
   if (!completion && (booking.status === 'denied' || booking.status === 'cancelled')) {
     return res.status(409).json({ error: `Cannot complete a ${booking.status} booking` });
@@ -617,23 +658,24 @@ app.post('/api/flight-bookings/:id/complete', (req, res) => {
 
   if (!completion && req.body.category === 'overflight') {
     try {
-      const result = recordOverflight(req.body, `booking:${bookingId}`);
+      const result = recordOverflight(req.body, `booking:${bookingId}:${leg}`);
       completion = { kind: 'overflight', record: result.entry };
     } catch (error) {
-      console.error(`Failed to save overflight completion for booking ${bookingId}:`, error);
+      console.error(`Failed to save overflight completion for booking ${bookingId} (${leg}):`, error);
       return res.status(500).json({ error: 'Failed to save overflight completion' });
     }
   } else if (!completion) {
     const movement = {
       ...req.body,
       bookingId,
+      bookingLeg: leg,
       timestamp: Date.now(),
     };
     const updatedMovements = [...movements, movement];
     try {
       saveMovements(updatedMovements);
     } catch (error) {
-      console.error(`Failed to save movement for booking ${bookingId}:`, error);
+      console.error(`Failed to save movement for booking ${bookingId} (${leg}):`, error);
       return res.status(500).json({ error: 'Failed to save movement' });
     }
     movements = updatedMovements;
@@ -641,7 +683,9 @@ app.post('/api/flight-bookings/:id/complete', (req, res) => {
   }
 
   let completedBooking = booking;
-  if (booking.status !== 'completed') {
+  if (getBookingLegs(booking).every(bookingLeg => (
+    bookingLeg === leg || findBookingCompletion(bookingId, bookingLeg)
+  ))) {
     try {
       completedBooking = persistCompletedBooking(bookingId);
     } catch (error) {
@@ -670,13 +714,20 @@ app.post('/api/flight-bookings/:id/approve', (req, res) => {
   if (!booking) {
     return res.status(404).json({ error: 'Booking not found' });
   }
-  if (isBookingCompleted(booking)) {
+  if (hasCompletedBookingLeg(booking)) {
     return res.status(409).json({ error: 'Completed booking cannot be changed' });
   }
-  booking.status = 'approved';
-  saveBookings();
+  const updatedBookings = bookings.map(item => (
+    String(item.id) === String(booking.id) ? { ...item, status: 'approved' } : item
+  ));
+  try {
+    saveBookings(updatedBookings);
+  } catch (error) {
+    console.error(`Failed to approve booking ${booking.id}:`, error);
+    return res.status(500).json({ error: 'Failed to save booking status' });
+  }
   if (wsBroadcast) wsBroadcast();
-  res.json(booking);
+  res.json(bookings.find(item => String(item.id) === String(booking.id)));
 });
 
 // Reject booking
@@ -685,13 +736,20 @@ app.post('/api/flight-bookings/:id/reject', (req, res) => {
   if (!booking) {
     return res.status(404).json({ error: 'Booking not found' });
   }
-  if (isBookingCompleted(booking)) {
+  if (hasCompletedBookingLeg(booking)) {
     return res.status(409).json({ error: 'Completed booking cannot be changed' });
   }
-  booking.status = 'denied';
-  saveBookings();
+  const updatedBookings = bookings.map(item => (
+    String(item.id) === String(booking.id) ? { ...item, status: 'denied' } : item
+  ));
+  try {
+    saveBookings(updatedBookings);
+  } catch (error) {
+    console.error(`Failed to deny booking ${booking.id}:`, error);
+    return res.status(500).json({ error: 'Failed to save booking status' });
+  }
   if (wsBroadcast) wsBroadcast();
-  res.json(booking);
+  res.json(bookings.find(item => String(item.id) === String(booking.id)));
 });
 
 

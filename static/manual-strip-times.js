@@ -14,6 +14,9 @@
             else if (strip.classList.contains('arrival')) cat = 'arrival';
             else if (strip.classList.contains('overflight')) cat = 'overflight';
             else if (strip.classList.contains('local')) cat = 'local';
+            if (strip.dataset.bookingLeg === 'return') {
+                return 'booking-' + strip.dataset.bookingId + '-return-' + cat;
+            }
             return 'booking-' + strip.dataset.bookingId + '-' + cat;
         }
         return 'dom-' + (strip.id || 'unknown');
@@ -59,12 +62,17 @@
                 const mid = id.replace('manual-', '');
                 strip = document.querySelector(`.flight-strip[data-manual][data-manual-id="${mid}"]`);
             } else if (id.startsWith('booking-')) {
-                // booking-<id>-<cat>
-                const match = id.match(/^booking-(.+?)-(circuit|landaway|arrival|overflight|local)$/);
+                const returnMatch = id.match(/^booking-(.+?)-return-(circuit|landaway|arrival|overflight|local)$/);
+                const match = returnMatch || id.match(/^booking-(.+?)-(circuit|landaway|arrival|overflight|local)$/);
                 if (match) {
                     const bid = match[1];
+                    const leg = returnMatch ? 'return' : 'outbound';
                     const cat = match[2];
-                    strip = Array.from(document.querySelectorAll('.flight-strip[data-booking-id]')).find(s => s.dataset.bookingId === bid && s.classList.contains(cat));
+                    strip = Array.from(document.querySelectorAll('.flight-strip[data-booking-id]')).find(s => (
+                        s.dataset.bookingId === bid
+                        && (s.dataset.bookingLeg || 'outbound') === leg
+                        && s.classList.contains(cat)
+                    ));
                 }
             } else if (id.startsWith('dom-')) {
                 const domid = id.replace('dom-', '');
