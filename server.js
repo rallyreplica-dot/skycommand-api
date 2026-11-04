@@ -411,6 +411,139 @@ function getBookingLegs(booking) {
     : ['outbound'];
 }
 
+const BOOKING_STRIP_LANES = new Set([
+  'booked-out-top',
+  'taxying-in',
+  'taxying-out',
+  'circuit-top',
+  'circuit-bottom',
+  'local',
+  'booked-in',
+]);
+const BOOKING_STRIP_CATEGORIES = new Set(['landaway', 'circuit', 'local', 'arrival', 'overflight']);
+const BOOKING_STRIP_TEXT_FIELDS = [
+  'reg', 'callsign', 'posn', 'from', 'to', 'type', 'flightType', 'category',
+  'pob', 'height', 'heading', 'lane', 'etd', 'eta', 'atd', 'ata',
+  'onTime', 'offTime', 'notes',
+];
+const BOOKING_STRIP_BOOLEAN_FIELDS = ['rwy', 'q', 'fuel', 'lights', 'ifr'];
+
+function getBookingLegDetails(booking, leg) {
+  const isReturn = leg === 'return';
+  const from = isReturn
+    ? booking.to || booking.arrival || ''
+    : booking.from || booking.departure || '';
+  const to = isReturn
+    ? booking.from || booking.departure || ''
+    : booking.to || booking.arrival || '';
+  const normalizedFrom = String(from).trim().toUpperCase().replace(/\s+(AIRFIELD|AIRPORT|AERODROME)$/g, '');
+  const normalizedTo = String(to).trim().toUpperCase().replace(/\s+(AIRFIELD|AIRPORT|AERODROME)$/g, '');
+  const fromIsBase = normalizedFrom === 'EGSX' || normalizedFrom === 'NORTH WEALD';
+  const toIsBase = normalizedTo === 'EGSX' || normalizedTo === 'NORTH WEALD';
+  const flightType = String(booking.type || '').toUpperCase();
+  let category;
+  let lane;
+
+  if (flightType === 'CIRCUIT') {
+    category = 'circuit';
+    lane = 'booked-out-top';
+  } else if (fromIsBase && toIsBase) {
+    category = 'local';
+    lane = 'booked-out-top';
+  } else if (fromIsBase) {
+    category = 'landaway';
+    lane = 'booked-out-top';
+  } else if (toIsBase) {
+    category = 'arrival';
+    lane = 'booked-in';
+  } else {
+    category = 'overflight';
+    lane = 'local';
+  }
+  if (isReturn) lane = 'booked-in';
+
+  return {
+    reg: booking.aircraft || booking.reg || '',
+    callsign: booking.callsign || '',
+    posn: booking.posn || '',
+    from,
+    to,
+    type: booking.aircraftType || booking.aircraft_type || '',
+    flightType: booking.type || '',
+    category,
+    pob: booking.pob || '',
+    height: booking.height || '',
+    heading: booking.heading || '',
+    lane,
+    etd: isReturn ? booking.returnETD || '' : booking.etd || '',
+    eta: isReturn ? booking.returnETA || '' : booking.eta || '',
+    atd: isReturn ? booking.returnATD || '' : booking.atd || '',
+    ata: isReturn ? booking.returnATA || '' : booking.ata || '',
+    onTime: isReturn ? booking.returnOnTime || '' : booking.onTime || '',
+    offTime: isReturn ? booking.returnOffTime || '' : booking.offTime || '',
+    notes: booking.name || booking.notes || '',
+    rwy: Boolean(booking.rwy),
+    q: Boolean(booking.q),
+    fuel: Boolean(booking.fuel),
+    lights: Boolean(booking.lights),
+    ifr: Boolean(booking.ifr),
+    revision: 0,
+    updatedAt: Date.now(),
+  };
+}
+
+function createBookingStripStates(booking) {
+  return Object.fromEntries(getBookingLegs(booking).map(leg => (
+    [leg, getBookingLegDetails(booking, leg)]
+  )));
+}
+
+function ensureBookingStripStates() {
+  let changed = false;
+  const updatedBookings = bookings.map(booking => {
+    const states = { ...(booking._skycommandStripStates || {}) };
+    let bookingChanged = false;
+    getBookingLegs(booking).forEach(leg => {
+      if (!states[leg]) {
+        states[leg] = getBookingLegDetails(booking, leg);
+        bookingChanged = true;
+      }
+    });
+    if (!bookingChanged) return booking;
+    changed = true;
+    return { ...booking, _skycommandStripStates: states };
+  });
+  if (changed) saveBookings(updatedBookings);
+  return updatedBookings;
+}
+
+function exposeBooking(booking) {
+  const { _skycommandStripStates, ...publicBooking } = booking;
+  return publicBooking;
+}
+
+function normalizeBookingStripState(booking, leg, body, current) {
+  const defaults = getBookingLegDetails(booking, leg);
+  const state = {};
+  BOOKING_STRIP_TEXT_FIELDS.forEach(field => {
+    const value = body[field] !== undefined ? body[field] : current[field] !== undefined ? current[field] : defaults[field];
+    state[field] = String(value === null ? '' : value).trim();
+  });
+  BOOKING_STRIP_BOOLEAN_FIELDS.forEach(field => {
+    const value = body[field] !== undefined ? body[field] : current[field] !== undefined ? current[field] : defaults[field];
+    state[field] = value === true || value === 'true';
+  });
+  if (!BOOKING_STRIP_CATEGORIES.has(state.category) || !BOOKING_STRIP_LANES.has(state.lane)) {
+    throw new Error('Invalid booking strip category or lane');
+  }
+  return {
+    ...state,
+    revision: current.revision + 1,
+    createdAt: current.createdAt || Date.now(),
+    updatedAt: Date.now(),
+  };
+}
+
 function findBookingCompletion(bookingId, leg = 'outbound') {
   const id = String(bookingId);
   const movement = movements.find(record => (
@@ -524,7 +657,7 @@ app.get('/api/flight-bookings', (req, res) => {
   const bookingsWithCompletedLegs = bookings.map(booking => {
     const completedLegs = getCompletedBookingLegs(booking);
     return {
-      ...booking,
+      ...exposeBooking(booking),
       status: booking.status === 'completed' && completedLegs.length < getBookingLegs(booking).length
         ? 'approved'
         : booking.status,
@@ -538,6 +671,73 @@ app.get('/api/flight-bookings', (req, res) => {
       booking.status !== 'cancelled' && !isBookingCompleted(booking)
     )));
   }
+});
+
+app.get('/api/flight-booking-strips', (req, res) => {
+  let bookingsWithStates;
+  try {
+    bookingsWithStates = ensureBookingStripStates();
+  } catch (error) {
+    console.error('Failed to initialize booking strip state:', error);
+    return res.status(500).json({ error: 'Failed to load booking strip state' });
+  }
+  const states = bookingsWithStates.flatMap(booking => getBookingLegs(booking).map(leg => ({
+    bookingId: String(booking.id),
+    leg,
+    ...booking._skycommandStripStates[leg],
+  })));
+  return res.json(states);
+});
+
+app.put('/api/flight-bookings/:id/strip-state/:leg', (req, res) => {
+  const booking = bookings.find(item => String(item.id) === String(req.params.id));
+  if (!booking) {
+    return res.status(404).json({ error: 'Booking not found' });
+  }
+  const bookingId = String(booking.id);
+  const leg = String(req.params.leg || '').toLowerCase();
+  if (!getBookingLegs(booking).includes(leg)) {
+    return res.status(400).json({ error: 'Invalid booking leg' });
+  }
+  if (booking.status === 'denied' || booking.status === 'cancelled'
+      || isBookingCompleted(booking) || findBookingCompletion(bookingId, leg)) {
+    return res.status(409).json({ error: 'Completed or inactive booking leg cannot be changed' });
+  }
+
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const current = (booking._skycommandStripStates || {})[leg] || getBookingLegDetails(booking, leg);
+  if (!Number.isInteger(body.expectedRevision) || body.expectedRevision !== current.revision) {
+    return res.status(409).json({
+      error: 'Booking strip changed on another workstation; reload before editing again',
+      current: { bookingId, leg, ...current },
+    });
+  }
+
+  let record;
+  try {
+    record = normalizeBookingStripState(booking, leg, body, current);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+  const updatedBooking = {
+    ...booking,
+    _skycommandStripStates: {
+      ...(booking._skycommandStripStates || {}),
+      [leg]: record,
+    },
+  };
+  const updatedBookings = bookings.map(item => (
+    String(item.id) === bookingId ? updatedBooking : item
+  ));
+  try {
+    saveBookings(updatedBookings);
+  } catch (error) {
+    console.error(`Failed to save booking strip state ${bookingId}/${leg}:`, error);
+    return res.status(500).json({ error: 'Failed to save booking strip state' });
+  }
+
+  if (wsBroadcast) wsBroadcast();
+  return res.json({ bookingId, leg, ...record });
 });
 
 // POST a new booking — accepts all fields from Pilot360 or manual entry
@@ -560,6 +760,7 @@ app.post('/api/flight-bookings', async (req, res) => {
     date,
     status: req.body.status === 'completed' ? 'pending' : (req.body.status || 'pending'),
   };
+  booking._skycommandStripStates = createBookingStripStates(booking);
 
   try {
     saveBookings(bookings.concat(booking));
@@ -569,7 +770,7 @@ app.post('/api/flight-bookings', async (req, res) => {
   }
   nextId += 1;
   if (wsBroadcast) wsBroadcast();
-  res.json(booking);
+  res.json(exposeBooking(booking));
 });
 
 // Update booking status
@@ -634,7 +835,7 @@ app.post('/api/flight-bookings/:id/status', (req, res) => {
   if (wsBroadcast) wsBroadcast();
   res.json({
     message: 'Booking status updated',
-    booking: bookings.find(item => String(item.id) === String(booking.id)),
+    booking: exposeBooking(bookings.find(item => String(item.id) === String(booking.id))),
   });
 });
 
@@ -701,7 +902,7 @@ app.post('/api/flight-bookings/:id/complete', (req, res) => {
   if (wsBroadcast) wsBroadcast();
   return res.json({
     message: 'Booking completed',
-    booking: completedBooking,
+    booking: exposeBooking(completedBooking),
     kind: completion.kind,
     record: completion.record,
     duplicate,
@@ -727,7 +928,7 @@ app.post('/api/flight-bookings/:id/approve', (req, res) => {
     return res.status(500).json({ error: 'Failed to save booking status' });
   }
   if (wsBroadcast) wsBroadcast();
-  res.json(bookings.find(item => String(item.id) === String(booking.id)));
+  res.json(exposeBooking(bookings.find(item => String(item.id) === String(booking.id))));
 });
 
 // Reject booking
@@ -749,7 +950,7 @@ app.post('/api/flight-bookings/:id/reject', (req, res) => {
     return res.status(500).json({ error: 'Failed to save booking status' });
   }
   if (wsBroadcast) wsBroadcast();
-  res.json(bookings.find(item => String(item.id) === String(booking.id)));
+  res.json(exposeBooking(bookings.find(item => String(item.id) === String(booking.id))));
 });
 
 

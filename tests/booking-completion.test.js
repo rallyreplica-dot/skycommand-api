@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { once } = require('node:events');
 const { test } = require('node:test');
+const WebSocket = require('ws');
 
 const PORT = 41001;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
@@ -14,9 +15,9 @@ function todayAsDDMMYY() {
   return `${String(date.getDate()).padStart(2, '0')}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getFullYear()).slice(-2)}`;
 }
 
-async function request(pathname, body) {
+async function request(pathname, body, method) {
   const response = await fetch(`${BASE_URL}${pathname}`, {
-    method: body === undefined ? 'GET' : 'POST',
+    method: method || (body === undefined ? 'GET' : 'POST'),
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -41,6 +42,22 @@ async function completeBooking(bookingId, leg, fields = {}) {
     `/api/flight-bookings/${encodeURIComponent(bookingId)}/complete?leg=${encodeURIComponent(leg)}`,
     { category: 'landaway', reg: 'GTEST', from: 'EGSX', to: 'EGSU', ...fields }
   );
+}
+
+async function connectWebSocket() {
+  const socket = new WebSocket(`ws://127.0.0.1:${PORT}`);
+  await once(socket, 'open');
+  return socket;
+}
+
+function waitForUpdate(socket) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Timed out waiting for WebSocket update')), 3000);
+    socket.once('message', message => {
+      clearTimeout(timer);
+      resolve(String(message));
+    });
+  });
 }
 
 function blockFile(filePath) {
@@ -219,6 +236,96 @@ test('booking legs complete independently and persist safely on port 41001', asy
       const denied = await request(`/api/flight-bookings/${denial.id}/status`, { status: 'denied' });
       assert.equal(denied.response.status, 200);
       assert.equal(denied.data.booking.status, 'denied');
+    });
+
+    await t.test('persists per-leg strip state, broadcasts it, and rejects stale or completed-leg writes', async () => {
+      const booking = await createBooking({
+        returnDate: todayAsDDMMYY(),
+        pilot360Field: 'unchanged',
+      });
+      assert.equal(Object.hasOwn(booking, '_skycommandStripStates'), false);
+
+      const initialStates = await request('/api/flight-booking-strips');
+      const outboundState = initialStates.data.find(state => (
+        state.bookingId === String(booking.id) && state.leg === 'outbound'
+      ));
+      const returnState = initialStates.data.find(state => (
+        state.bookingId === String(booking.id) && state.leg === 'return'
+      ));
+      assert.equal(outboundState.lane, 'booked-out-top');
+      assert.equal(returnState.lane, 'booked-in');
+      assert.equal(outboundState.revision, 0);
+
+      const socketOne = await connectWebSocket();
+      const socketTwo = await connectWebSocket();
+      try {
+        const updates = [waitForUpdate(socketOne), waitForUpdate(socketTwo)];
+        const saved = await request(`/api/flight-bookings/${booking.id}/strip-state/outbound`, {
+          expectedRevision: 0,
+          lane: 'taxying-out',
+          atd: '1020',
+          ata: '1100',
+          notes: 'Two-tab edit',
+          rwy: true,
+          q: true,
+          fuel: true,
+          lights: false,
+          ifr: true,
+        }, 'PUT');
+        assert.equal(saved.response.status, 200);
+        assert.equal(saved.data.revision, 1);
+        assert.deepEqual(await Promise.all(updates), ['update', 'update']);
+
+        const stale = await request(`/api/flight-bookings/${booking.id}/strip-state/outbound`, {
+          expectedRevision: 0,
+          lane: 'booked-in',
+          notes: 'Stale client',
+        }, 'PUT');
+        assert.equal(stale.response.status, 409);
+        assert.equal(stale.data.current.revision, 1);
+
+        const loaded = await request('/api/flight-booking-strips');
+        const persisted = loaded.data.find(state => (
+          state.bookingId === String(booking.id) && state.leg === 'outbound'
+        ));
+        assert.equal(persisted.lane, 'taxying-out');
+        assert.equal(persisted.atd, '1020');
+        assert.equal(persisted.ata, '1100');
+        assert.equal(persisted.notes, 'Two-tab edit');
+        assert.equal(persisted.rwy, true);
+        assert.equal(persisted.q, true);
+        assert.equal(persisted.fuel, true);
+        assert.equal(persisted.lights, false);
+        assert.equal(persisted.ifr, true);
+
+        const flightBookings = await request('/api/flight-bookings');
+        const publicBooking = flightBookings.data.find(item => item.id === booking.id);
+        assert.equal(publicBooking.pilot360Field, 'unchanged');
+        assert.equal(Object.hasOwn(publicBooking, '_skycommandStripStates'), false);
+
+        const complete = await completeBooking(booking.id, 'outbound');
+        assert.equal(complete.response.status, 200);
+        const staleCompleted = await request(`/api/flight-bookings/${booking.id}/strip-state/outbound`, {
+          expectedRevision: 1,
+          lane: 'booked-in',
+        }, 'PUT');
+        assert.equal(staleCompleted.response.status, 409);
+
+        const returnEdit = await request(`/api/flight-bookings/${booking.id}/strip-state/return`, {
+          expectedRevision: 0,
+          lane: 'taxying-in',
+          atd: '1410',
+          notes: 'Return leg remains editable',
+        }, 'PUT');
+        assert.equal(returnEdit.response.status, 200);
+        assert.equal(returnEdit.data.leg, 'return');
+        const completedReturn = await completeBooking(booking.id, 'return', { category: 'arrival' });
+        assert.equal(completedReturn.response.status, 200);
+        assert.equal(completedReturn.data.booking.status, 'completed');
+      } finally {
+        socketOne.close();
+        socketTwo.close();
+      }
     });
 
     await t.test('returns errors on booking writes and retries a recorded movement without duplication', async () => {

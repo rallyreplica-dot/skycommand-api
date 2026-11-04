@@ -577,125 +577,30 @@
 let bookingLoadSequence = 0;
 function loadBookingsFromAPI() {
     const sequence = ++bookingLoadSequence;
-    return fetch('/api/flight-bookings')
-        .then(resp => {
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            return resp.json();
-        })
-        .then(bookings => {
+    const bookingsRequest = fetch('/api/flight-bookings').then(response => {
+        if (!response.ok) throw new Error(`Bookings HTTP ${response.status}`);
+        return response.json();
+    });
+    const stripStatesRequest = fetch('/api/flight-booking-strips').then(response => {
+        if (!response.ok) throw new Error(`Booking strip state HTTP ${response.status}`);
+        return response.json();
+    });
+    return Promise.all([bookingsRequest, stripStatesRequest])
+        .then(([bookings, stripStates]) => {
             if (sequence !== bookingLoadSequence) return;
             if (!Array.isArray(bookings)) throw new Error('Expected an array of bookings');
-            document.querySelectorAll('.flight-strip').forEach(strip => {
-                if (!strip.hasAttribute('data-manual')) strip.remove();
-            });
-            console.log('[DEBUG] Bookings loaded from API:', bookings);
-            console.log('[DEBUG] Number of bookings:', bookings.length);
+            if (!Array.isArray(stripStates)) throw new Error('Expected an array of booking strip states');
             // Get today's date in DDMMYY format to match backend
             const today = new Date();
             const dd = String(today.getDate()).padStart(2, '0');
             const mm = String(today.getMonth() + 1).padStart(2, '0');
             const yy = String(today.getFullYear()).slice(-2);
             const todayStr = `${dd}${mm}${yy}`;
-            // Show bookings for today (outbound) and bookings with returnDate === todayStr (return legs)
-            bookings.forEach(booking => {
-                // Skip denied, cancelled, or completed bookings
-                if (booking.status === 'denied' || booking.status === 'cancelled' || booking.status === 'completed') return;
-                const completedLegs = new Set(Array.isArray(booking.completedLegs) ? booking.completedLegs : []);
-                // Outbound leg for today
-                if (booking.date === todayStr && !completedLegs.has('outbound')) {
-                    console.log('[DEBUG] Rendering outbound booking:', booking);
-                    let reg = booking.aircraft || booking.reg || '';
-                    let posn = booking.posn || '';
-                    let from = booking.from || booking.departure || '';
-                    let to = booking.to || booking.arrival || '';
-                    let height = booking.height || '';
-                    let heading = booking.heading || '';
-                    let pob = booking.pob || '';
-                    let etd = booking.etd || '';
-                    let eta = booking.eta || '';
-                    let callsign = booking.callsign || '';
-                    let flightType = booking.type || '';
-                    let status = booking.status || 'pending';
-                    let bookingId = booking.id;
-                    let {strip, laneSelector} = createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta, callsign, flightType, status, bookingId, bookingLeg: 'outbound'});
-                    let lane = document.querySelector(laneSelector);
-                    if (!lane) lane = document.querySelector('.lane');
-                    let container = lane.querySelector('#flight-strip-container');
-                    if (!container) {
-                        container = document.createElement('div');
-                        container.id = 'flight-strip-container';
-                        const label = lane.querySelector('.lane-label');
-                        if (label && label.nextSibling) {
-                            lane.insertBefore(container, label.nextSibling);
-                        } else {
-                            lane.appendChild(container);
-                        }
-                    }
-                    container.appendChild(strip);
-                    if (strip._shouldPulse) {
-                        strip.classList.add('pending-pulse');
-                        strip._addApproveDeny();
-                    }
-                }
-                // Return leg for today (if present and not already shown)
-                if (booking.returnDate === todayStr && !completedLegs.has('return')) {
-                        console.log('[DEBUG] Rendering return leg for booking:', booking);
-                        let reg = booking.aircraft || booking.reg || '';
-                        let posn = booking.posn || '';
-                        // For return, swap from/to
-                        let from = booking.to || booking.arrival || '';
-                        let to = booking.from || booking.departure || '';
-                        let height = booking.height || '';
-                        let heading = booking.heading || '';
-                        let pob = booking.pob || '';
-                        // Use returnETD/returnETA if present, else blank
-                        let etd = booking.returnETD || '';
-                        let eta = booking.returnETA || '';
-                        let callsign = booking.callsign || '';
-                        let flightType = booking.type || '';
-                        let status = booking.status || 'pending';
-                        let bookingId = booking.id;
-                        let {strip, laneSelector} = createFlightStrip({reg, posn, from, to, height, heading, pob, etd, eta, callsign, flightType, status, bookingId, bookingLeg: 'return'});
-                        // For return, use arrival lane
-                        laneSelector = '.lane-booked-in';
-                        let lane = document.querySelector(laneSelector);
-                        if (!lane) lane = document.querySelector('.lane');
-                        let container = lane.querySelector('#flight-strip-container');
-                        if (!container) {
-                            container = document.createElement('div');
-                            container.id = 'flight-strip-container';
-                            const label = lane.querySelector('.lane-label');
-                            if (label && label.nextSibling) {
-                                lane.insertBefore(container, label.nextSibling);
-                            } else {
-                                lane.appendChild(container);
-                        }
-                        container.appendChild(strip);
-                        if (strip._shouldPulse) {
-                            strip.classList.add('pending-pulse');
-                            strip._addApproveDeny();
-                        }
-                    }
-                }
-            });
-            // Sort booked-out lane: earliest ETD at bottom (latest at top)
-            function sortLaneByETD(containerSelector, earliestAtBottom) {
-                const container = document.querySelector(containerSelector + ' #flight-strip-container');
-                if (!container) return;
-                const strips = Array.from(container.children);
-                strips.sort((a, b) => {
-                    const etdA = a.querySelector('.quarter.top-left span')?.textContent || '';
-                    const etdB = b.querySelector('.quarter.top-left span')?.textContent || '';
-                    const minsA = etdA.length === 4 ? parseInt(etdA.slice(0,2)) * 60 + parseInt(etdA.slice(2,4)) : 9999;
-                    const minsB = etdB.length === 4 ? parseInt(etdB.slice(0,2)) * 60 + parseInt(etdB.slice(2,4)) : 9999;
-                    return earliestAtBottom ? (minsB - minsA) : (minsA - minsB);
-                });
-                strips.forEach(s => container.appendChild(s));
-            }
-            sortLaneByETD('.lane-booked-out-top', true);   // earliest at bottom
-            sortLaneByETD('.lane-booked-in', false);        // earliest at top
+            window.reconcileBookingStrips(bookings, stripStates, todayStr);
             // Batch lookup aircraft types from server
-            const regs = bookings.filter(b => b.aircraft || b.reg).map(b => (b.aircraft || b.reg || '').toUpperCase());
+            const regs = Array.from(document.querySelectorAll('.flight-strip[data-booking-id] .aircraft-reg'))
+                .map(registration => registration.textContent.trim().toUpperCase())
+                .filter(Boolean);
             if (regs.length > 0) {
                 fetch('/api/aircraft-types', {
                     method: 'POST',
@@ -704,7 +609,7 @@ function loadBookingsFromAPI() {
                 })
                 .then(r => r.json())
                 .then(types => {
-                    document.querySelectorAll('.strip-aircraft-box').forEach(box => {
+                    document.querySelectorAll('.flight-strip[data-booking-id] .strip-aircraft-box').forEach(box => {
                         const regEl = box.querySelector('.aircraft-reg');
                         const typeEl = box.querySelector('.aircraft-type');
                         if (regEl && typeEl && !typeEl.textContent) {
@@ -717,7 +622,7 @@ function loadBookingsFromAPI() {
             }
         })
         .catch(err => {
-            console.error('Failed to load bookings from API:', err);
+            console.error('Failed to load bookings and booking strip state:', err);
         });
 }
 document.addEventListener('DOMContentLoaded', function() {
@@ -968,11 +873,14 @@ document.querySelectorAll('.droppable').forEach(dropTarget => {
                 const endpoint = bookingId
                     ? `/api/flight-bookings/${encodeURIComponent(bookingId)}/complete?leg=${encodeURIComponent(bookingLeg)}`
                     : '/api/overflights';
-                fetch(endpoint, {
+                Promise.resolve(bookingId && window.flushBookingStripState
+                    ? window.flushBookingStripState(stripElem)
+                    : null)
+                .then(() => fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(overflight)
-                })
+                }))
                 .then(async response => {
                     const result = await response.json();
                     if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
@@ -1004,11 +912,14 @@ document.querySelectorAll('.droppable').forEach(dropTarget => {
             const endpoint = bookingId
                 ? `/api/flight-bookings/${encodeURIComponent(bookingId)}/complete?leg=${encodeURIComponent(bookingLeg)}`
                 : '/api/movements';
-            fetch(endpoint, {
+            Promise.resolve(bookingId && window.flushBookingStripState
+                ? window.flushBookingStripState(stripElem)
+                : null)
+            .then(() => fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(logEntry)
-            })
+            }))
             .then(async response => {
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
@@ -1060,6 +971,8 @@ document.querySelectorAll('.droppable').forEach(dropTarget => {
         if (stripElem.hasAttribute('data-manual') && stripElem.dataset.manualId) {
             stripElem.dataset.lane = dropTarget.dataset.lane || '';
             window.scheduleManualStripSave(stripElem, 0);
+        } else if (stripElem.dataset.bookingId) {
+            window.scheduleBookingStripSave(stripElem, 0);
         }
     });
 });
@@ -1534,6 +1447,7 @@ document.getElementById('submitBtn').addEventListener('click', function() {
 });
 </script>
 </script>
+<script src="booking-strip-sync.js"></script>
 <script src="manual-strip-sync.js"></script>
 <script src="manual-strip-times.js"></script>
 // ...existing code...
